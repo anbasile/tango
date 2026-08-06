@@ -1,3 +1,4 @@
+import functools
 import inspect
 import logging
 import random
@@ -14,6 +15,22 @@ from transformers.modeling_outputs import (
 from tango.integrations.torch import Model
 
 logger = logging.getLogger(__name__)
+
+
+def _has_cached_prefix(past_key_values: Any) -> bool:
+    """
+    Whether ``past_key_values`` actually holds anything.
+
+    Since transformers v5, ``generate()`` passes an empty ``Cache`` object on the first step
+    instead of ``None``, so the mere presence of ``past_key_values`` no longer tells you the
+    model has already seen the prefix.
+    """
+    if past_key_values is None:
+        return False
+    get_seq_length = getattr(past_key_values, "get_seq_length", None)
+    if get_seq_length is not None:
+        return get_seq_length() > 0
+    return len(past_key_values) > 0
 
 
 def _get_bound_args_with_decorators(fn, *args, **kwargs):
@@ -119,9 +136,14 @@ def add_soft_prompt(
 
     old_forward = model.forward
 
+    # `functools.wraps` sets `__wrapped__`, which `inspect.signature()` follows. Without it
+    # `new_forward` advertises only `(*args, **kwargs)`, and since transformers v5 `generate()`
+    # validates its keyword arguments against the signature of `model.forward` — so legitimate
+    # arguments like `encoder_outputs` get rejected as unused.
+    @functools.wraps(old_forward)
     def new_forward(*args, **kwargs):
         # Massage the input to include the prompt
-        if kwargs.get("past_key_values") is not None:
+        if _has_cached_prefix(kwargs.get("past_key_values")):
             # If we have already been running this model, we don't need to do anything with the prefix now.
             return old_forward(*args, **kwargs)
         if kwargs.get("encoder_outputs") is not None:
@@ -135,22 +157,34 @@ def add_soft_prompt(
             inputs_embeds = original_embedding(input_ids)
 
         inputs_embeds = kwargs.get("inputs_embeds", inputs_embeds)
+        patched_length: Optional[int] = None
         if inputs_embeds is not None:
             kwargs["inputs_embeds"] = torch.cat(
                 [prompt_embedding.expand(inputs_embeds.size(0), -1, -1), inputs_embeds], dim=1
             )
+            patched_length = kwargs["inputs_embeds"].size(1)
 
         patch_tensor(kwargs, "labels")
         patch_tensor(kwargs, "attention_mask", 1)
         patch_tensor(kwargs, "token_type_ids")
         patch_tensor_with_indices(kwargs, "position_ids", prompt_length)
 
+        # Massage the output to look like the prompt was never there.
+        #
+        # Only trim tensors that actually span the whole patched sequence. Since transformers v5,
+        # `generate()` passes `logits_to_keep`, so the LM head may return logits for just the last
+        # position — trimming the prompt off those would leave an empty tensor.
+        def unpatch(t: torch.Tensor, seq_dim: int) -> torch.Tensor:
+            if patched_length is None or t.size(seq_dim) != patched_length:
+                return t
+            index: Any = [slice(None)] * seq_dim + [slice(prompt_length, None)]
+            return t[tuple(index)]
+
         # Run the model
         result = old_forward(*args, **kwargs)
 
-        # Massage the output to look like the prompt was never there
-        unpatch_tensor = lambda t: t[:, prompt_length:]  # noqa: E731
-        unpatch_attention_tensor = lambda t: t[:, :, prompt_length:]  # noqa: E731
+        unpatch_tensor = lambda t: unpatch(t, 1)  # noqa: E731
+        unpatch_attention_tensor = lambda t: unpatch(t, 2)  # noqa: E731
         unpatch_kv_tensor = unpatch_attention_tensor
         if isinstance(result, CausalLMOutputWithCrossAttentions):
             if result.logits is not None:

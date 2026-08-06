@@ -174,9 +174,9 @@ class Executor(Registrable):
         return ExecutorOutput(successful=successful, failed=failed, not_run=not_run)
 
     # NOTE: The reason for having this method instead of just using `execute_step()` to run
-    # a single step is that the certain executors, such as the BeakerExecutor, need to
-    # serialize steps somehow, and the easiest way to serialize a step is by serializing the
-    # whole step config (which can be accessed via the step graph).
+    # a single step is that remote executors need to serialize steps somehow, and the easiest
+    # way to serialize a step is by serializing the whole step config (which can be accessed
+    # via the step graph).
 
     def execute_sub_graph_for_steps(
         self, step_graph: StepGraph, *step_names: str, run_name: Optional[str] = None

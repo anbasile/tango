@@ -10,13 +10,23 @@ from tango.integrations.datasets import (
 )
 from tango.step import Step
 
+# A local two-split fixture, so these tests don't depend on the HuggingFace Hub.
+# "train" has 2 instances and "validation" has 3.
+DATA_FILES = {
+    "train": str(TangoTestCase.FIXTURES_ROOT / "integrations" / "datasets" / "train.jsonl"),
+    "validation": str(
+        TangoTestCase.FIXTURES_ROOT / "integrations" / "datasets" / "validation.jsonl"
+    ),
+}
+
 
 class TestDatasets(TangoTestCase):
     def test_from_params_and_convert_to_tango_dataset_dict(self):
         step: LoadDataset = Step.from_params(  # type: ignore[assignment]
             {
                 "type": "datasets::load",
-                "path": "lhoestq/test",
+                "path": "json",
+                "data_files": DATA_FILES,
                 "cache_dir": str(self.TEST_DIR / "cache"),
             }
         )
@@ -50,15 +60,15 @@ class TestDatasets(TangoTestCase):
 
 
 def test_mapped_sequence_of_dataset():
-    ds = datasets.load_dataset("piqa", split="validation")
-    mapped_ds = MappedSequence(lambda x: x["goal"], ds)  # type: ignore[arg-type]
+    ds = datasets.load_dataset("json", data_files=DATA_FILES, split="validation")
+    mapped_ds = MappedSequence(lambda x: x["text"], ds)  # type: ignore[arg-type]
     assert len(ds) == len(mapped_ds)  # type: ignore[arg-type]
-    assert ds[0]["goal"] == mapped_ds[0]  # type: ignore[index]
-    assert ds[0]["goal"] == mapped_ds[:10][0]  # type: ignore[index]
+    assert ds[0]["text"] == mapped_ds[0]  # type: ignore[index]
+    assert ds[0]["text"] == mapped_ds[:10][0]  # type: ignore[index]
 
 
 def test_datasets_dataset_remix():
-    dataset_dict = datasets.load_dataset("lhoestq/test")
+    dataset_dict = datasets.load_dataset("json", data_files=DATA_FILES)
     step = DatasetRemixStep()
     result = step.run(
         input=dataset_dict,  # type: ignore[arg-type]

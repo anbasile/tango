@@ -73,8 +73,8 @@ class TestFromParams(TangoTestCase):
         assert bare_type == Dict[str, str]
         assert bare_bare_type == Dict[str, str]
 
-        assert remove_optional(Optional[str]) == str  # type: ignore[arg-type]
-        assert remove_optional(str) == str
+        assert remove_optional(Optional[str]) is str  # type: ignore[arg-type]
+        assert remove_optional(str) is str
 
     @pytest.mark.parametrize("input_type", [dict, Params])
     def test_from_params(self, input_type):
@@ -228,7 +228,7 @@ class TestFromParams(TangoTestCase):
         for expected_type, param_str in [(int, int_param_str), (float, float_param_str)]:
             for cls in [IntFloat, FloatInt]:
                 c = cls.from_params(Params(json.loads(param_str)))
-                assert type(c.a) == expected_type  # type: ignore[attr-defined]
+                assert type(c.a) is expected_type  # type: ignore[attr-defined]
 
     def test_invalid_type_conversions(self):
         class A(FromParams):

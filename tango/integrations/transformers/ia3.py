@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import PreTrainedModel
-from transformers.modeling_utils import Conv1D
+from transformers.pytorch_utils import Conv1D
 
 
 @dataclass

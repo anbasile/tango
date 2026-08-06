@@ -28,16 +28,14 @@ class Optimizer(torch.optim.Optimizer, Registrable):
             :options: +ELLIPSIS
 
             torch::ASGD
-            torch::Adadelta
-            torch::Adagrad
-            torch::Adam
-            torch::AdamW
+            ...
+            torch::SGD
             ...
 
     """
 
 
-class LRScheduler(torch.optim.lr_scheduler._LRScheduler, Registrable):
+class LRScheduler(torch.optim.lr_scheduler.LRScheduler, Registrable):
     """
     A :class:`~tango.common.Registrable` version of a PyTorch learning
     rate scheduler.
@@ -60,8 +58,8 @@ class LRScheduler(torch.optim.lr_scheduler._LRScheduler, Registrable):
             :options: +ELLIPSIS
 
             torch::ChainedScheduler
-            torch::ConstantLR
-            torch::CosineAnnealingLR
+            ...
+            torch::StepLR
             ...
     """
 
@@ -75,14 +73,8 @@ for name, cls in torch.optim.__dict__.items():
     ):
         Optimizer.register("torch::" + name)(cls)
 
-# Note: This is a hack. Remove after we upgrade the torch version.
-base_class: Type
-try:
-    base_class = torch.optim.lr_scheduler.LRScheduler
-except AttributeError:
-    base_class = torch.optim.lr_scheduler._LRScheduler
-
 # Register all learning rate schedulers.
+base_class: Type = torch.optim.lr_scheduler.LRScheduler
 for name, cls in torch.optim.lr_scheduler.__dict__.items():
     if isinstance(cls, type) and issubclass(cls, base_class) and not cls == base_class:
         LRScheduler.register("torch::" + name)(cls)

@@ -145,11 +145,14 @@ def tokenize_data(
         )
 
         if not concat_source_target:
-            # Setup the tokenizer for targets
-            with tokenizer.as_target_tokenizer():
-                labels = tokenizer(
-                    targets, max_length=max_target_length, padding=padding, truncation=True
-                )
+            # `text_target` replaced the `as_target_tokenizer()` context manager, which
+            # transformers removed in v5.
+            labels = tokenizer(
+                text_target=targets,
+                max_length=max_target_length,
+                padding=padding,
+                truncation=True,
+            )
         else:
             labels = {"input_ids": []}
             for input_ids in model_inputs["input_ids"]:
@@ -424,10 +427,7 @@ class FinetuneStep(TorchTrainStep):
 
         # Hacky way to deal with resizing the model embeddings.
         model_params_dict = model._params.as_dict()
-        if "fairscale" in model_params_dict["type"]:
-            model_params_dict["model"]["num_tokens"] = len(tokenizer)  # type: ignore
-        else:
-            model_params_dict["num_tokens"] = len(tokenizer)  # type: ignore
+        model_params_dict["num_tokens"] = len(tokenizer)  # type: ignore
 
         model = Lazy(
             model._constructor,

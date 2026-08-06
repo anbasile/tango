@@ -70,10 +70,8 @@ class StepResources(FromParams):
 
     machine: Optional[str] = None
     """
-    This is an executor-dependent option.
-
-    With the Beaker executor, for example, you can set this to "local" to force
-    the executor to run the step locally instead of on Beaker.
+    This is an executor-dependent option. Set it to "local" to force the executor to
+    run the step on the local machine.
     """
 
     cpu_count: Optional[float] = None
@@ -93,8 +91,8 @@ class StepResources(FromParams):
     The type of GPU that the step requires.
 
     The exact string you should use to define a GPU type depends on the executor.
-    With the Beaker executor, for example, you should use the same strings you
-    see in the Beaker UI, such as 'NVIDIA A100-SXM-80GB'.
+    Typically it is the name the underlying scheduler reports, such as
+    'NVIDIA A100-SXM-80GB'.
     """
 
     memory: Optional[str] = None

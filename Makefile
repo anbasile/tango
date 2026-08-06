@@ -11,4 +11,5 @@ run-checks :
 	mypy --check-untyped-defs .
 	CUDA_VISIBLE_DEVICES='' pytest -v --color=yes --doctest-modules --ignore=tests/integrations --ignore=tango/integrations tests/ tango/
 	CUDA_VISIBLE_DEVICES='' pytest -v --color=yes --doctest-modules tango/integrations/torch tests/integrations/torch
+	CUDA_VISIBLE_DEVICES='' pytest -v --color=yes --doctest-modules tango/integrations/datasets tests/integrations/datasets
 	CUDA_VISIBLE_DEVICES='' pytest -v --color=yes --doctest-modules tango/integrations/transformers tests/integrations/transformers

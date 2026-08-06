@@ -6,12 +6,11 @@ import sys
 import traceback
 from collections import OrderedDict
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, tzinfo
+from datetime import datetime, timezone, tzinfo
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Optional, Set, Tuple, Union
 
-import pytz
 
 from .exceptions import SigTermReceived
 
@@ -279,7 +278,7 @@ def exception_to_string(e: BaseException) -> str:
 
 
 def utc_now_datetime() -> datetime:
-    return datetime.utcnow().replace(tzinfo=pytz.utc)
+    return datetime.now(timezone.utc)
 
 
 def local_timezone() -> Optional[tzinfo]:

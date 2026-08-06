@@ -83,7 +83,7 @@ from tango.cli import (
     prepare_workspace,
 )
 from tango.common.exceptions import CliRunError, IntegrationMissingError
-from tango.common.logging import cli_logger, initialize_logging
+from tango.common.logging import cli_logger
 from tango.common.params import Params
 from tango.common.util import (
     find_integrations,
@@ -282,65 +282,6 @@ def run(
         called_by_executor=obj.called_by_executor,
         ext_var=ext_var,
     )
-
-
-@main.command(hidden=True)
-@click.argument(
-    "experiment",
-    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
-)
-@click.argument(
-    "step_name",
-    type=str,
-)
-@click.argument(
-    "workspace_url",
-    type=str,
-)
-@click.option(
-    "-i",
-    "--include-package",
-    type=str,
-    help="Python packages or modules to import for tango components.",
-    multiple=True,
-)
-@click.option(
-    "--log-level",
-    help="Set the global log level.",
-    type=click.Choice(["debug", "info", "warning", "error"], case_sensitive=False),
-    show_choices=True,
-)
-def beaker_executor_run(
-    experiment: str,
-    step_name: str,
-    workspace_url: str,
-    include_package: Optional[Sequence[str]] = None,
-    log_level: str = "debug",
-):
-    """
-    This command is only used internally by the BeakerExecutor.
-    """
-    from tango.executor import Executor
-
-    if include_package:
-        for package_name in include_package:
-            import_extra_module(package_name)
-
-    # Load step graph and step.
-    step_graph = StepGraph.from_file(experiment)
-    step = step_graph[step_name]
-
-    # Initialize workspace and executor.
-    # NOTE: We use the default executor here because we're just running the step
-    # locally in the main process.
-    workspace = Workspace.from_url(workspace_url)
-    executor = Executor(workspace=workspace, include_package=include_package)
-
-    # Initialize logging.
-    initialize_logging(log_level=log_level, enable_cli_logs=True, file_friendly_logging=True)
-
-    # Run step.
-    executor.execute_step(step)
 
 
 @main.command(**_CLICK_COMMAND_DEFAULTS)

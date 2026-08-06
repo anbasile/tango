@@ -30,10 +30,6 @@ class TrainCallback(Registrable):
         The ``step`` argument to callback methods is the total/overall number of training steps
         so far, independent of the current epoch.
 
-    .. seealso::
-        See :class:`~tango.integrations.wandb.WandbTrainCallback` for an example
-        implementation.
-
     :ivar Workspace workspace: The tango workspace being used.
     :ivar TrainConfig train_config: The training config.
     :ivar TrainingEngine training_engine: The engine used to train the model.

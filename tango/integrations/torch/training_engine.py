@@ -158,8 +158,8 @@ class TorchTrainingEngine(TrainingEngine):
         self.amp = amp
         self.amp_dtype = torch.bfloat16 if amp_use_bfloat16 else torch.float16
         self.max_grad_norm = max_grad_norm
-        self.grad_scaler: Optional[torch.cuda.amp.GradScaler] = (
-            None if not amp else torch.cuda.amp.GradScaler()
+        self.grad_scaler: Optional[torch.amp.GradScaler] = (
+            None if not amp else torch.amp.GradScaler(train_config.device_type)
         )
 
         if train_config.is_distributed:
@@ -288,21 +288,21 @@ class TorchTrainingEngine(TrainingEngine):
         save_state(client_state, "trainer")
 
     def load_checkpoint(self, checkpoint_dir: Path) -> Dict[str, Any]:
-        self.load_model_state(
-            torch.load(checkpoint_dir / f"worker{self.train_config.worker_id}_model.pt")
-        )
-        self.optimizer.load_state_dict(
-            torch.load(checkpoint_dir / f"worker{self.train_config.worker_id}_optimizer.pt")
-        )
+        # NOTE: `weights_only=False` is required because these are checkpoints we wrote ourselves
+        # into the workspace, and they hold arbitrary Python objects (the trainer's `client_state`
+        # in particular). Since torch 2.6 the default flipped to `weights_only=True`, which
+        # refuses to unpickle anything but tensors and a small allowlist of builtins.
+        def load(name: str) -> Any:
+            path = checkpoint_dir / f"worker{self.train_config.worker_id}_{name}.pt"
+            return torch.load(path, weights_only=False)
+
+        self.load_model_state(load("model"))
+        self.optimizer.load_state_dict(load("optimizer"))
         if self.lr_scheduler is not None:
-            self.lr_scheduler.load_state_dict(
-                torch.load(checkpoint_dir / f"worker{self.train_config.worker_id}_lr_scheduler.pt")
-            )
+            self.lr_scheduler.load_state_dict(load("lr_scheduler"))
         if self.grad_scaler is not None:
-            self.grad_scaler.load_state_dict(
-                torch.load(checkpoint_dir / f"worker{self.train_config.worker_id}_grad_scaler.pt")
-            )
-        return torch.load(checkpoint_dir / f"worker{self.train_config.worker_id}_trainer.pt")
+            self.grad_scaler.load_state_dict(load("grad_scaler"))
+        return load("trainer")
 
     def save_complete_weights_from_checkpoint(
         self, checkpoint_dir: Path, weights_path: Path

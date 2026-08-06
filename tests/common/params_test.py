@@ -73,7 +73,7 @@ class TestParams(TangoTestCase):
             "model.layers.1": {"type": "classifier"},
         }
         params = Params.from_file(
-            filename, overrides if input_type == dict else json.dumps(overrides)
+            filename, overrides if input_type is dict else json.dumps(overrides)
         )
 
         assert params["data_path"] == "train.txt"

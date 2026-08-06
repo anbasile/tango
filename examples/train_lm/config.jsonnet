@@ -3,8 +3,6 @@
 ##################
 
 local pretrained_model = "gpt2";
-# With 'fsdp' and 'activation_checkpointing' (see constants below), you should be able to train
-# a 6B model on 4x ~40GB GPUs:
 # local pretrained_model = "EleutherAI/gpt-j-6B";
 
 # This doesn't seem to work with gpt2, but works fine with gpt-j.
@@ -24,10 +22,7 @@ local grad_accum = 1;  # number of gradient accumulation steps (changes the effe
 local batch_size = 8;
 # So the effective batch size is `batch_size * grad_accum * devices`
 
-local activation_checkpointing = false;  # use activation/gradient checkpointing (probably need this GPT-J 6B, but not gpt2)
 local amp = false;  # use PyTorch's native automatic mixed precision
-local fsdp = false;  # Use FairScale's FullyShardedDataParallel (probably need this GPT-J 6B, but not gpt2)
-local cpu_offloading = false;  # Can only be used with 'fsdp' - saves a lot of GPU memory by offloading params+gradients to CPU, but is very slow.
 
 ######################
 # Optimizer settings #
@@ -40,18 +35,8 @@ local learning_rate = 0.00005;  # you can probably use a higher LR for a small m
 # <----- you probably don't need to edit below this line ----> #
 
 
-assert fsdp == true || cpu_offloading == false : "cpu_offloading only available with fsdp";
-
-# FullyShardedDataParallel config:
-local fsdp_config = if fsdp then {
-    reshard_after_forward: true,
-    move_params_to_cpu: cpu_offloading,
-    move_grads_to_cpu: cpu_offloading,
-    mixed_precision: amp,
-} else null;
-
 local training_engine = {
-    type: if fsdp then "fairscale" else "torch",
+    type: "torch",
     optimizer: {
         type: "torch::AdamW",
         lr: learning_rate,
@@ -64,7 +49,6 @@ local training_engine = {
         num_training_steps: training_steps,
     },
     amp: amp,
-    [if fsdp then "fsdp_config" else null]: fsdp_config,
 };
 
 local distributed_dataloader = {
@@ -100,15 +84,9 @@ local dataloader = if devices > 1 then distributed_dataloader else single_device
         trained_model: {
             type: "torch::train",
             model: {
-                type: "fairscale::with_wrapped_modules",
-                model: {
-                    type: "transformers::AutoModelForCausalLM::from_pretrained",
-                    pretrained_model_name_or_path: pretrained_model,
-                    low_cpu_mem_usage: load_with_low_cpu_mem_usage,
-                },
-                modules_to_wrap: ["transformer\\.h\\.[0-9]+"],  # tell FairScale to wrap the transformer's blocks individually
-                fsdp_config: fsdp_config,
-                activation_checkpointing: activation_checkpointing,
+                type: "transformers::AutoModelForCausalLM::from_pretrained",
+                pretrained_model_name_or_path: pretrained_model,
+                low_cpu_mem_usage: load_with_low_cpu_mem_usage,
             },
             dataset_dict: { type: "ref", ref: "tokenized_data" },
             train_dataloader: dataloader,

@@ -1,5 +1,6 @@
 import time
 
+import numpy as np
 import pytest
 import torch
 import torch.nn as nn
@@ -25,6 +26,38 @@ class DummyModel(Model):
 
     def forward(self, x, y=None):
         return self.linear(x)
+
+
+class TestCheckpointRoundTrip(TangoTestCase):
+    def test_save_and_load_checkpoint(self):
+        """
+        Since torch 2.6, ``torch.load`` defaults to ``weights_only=True`` and refuses to
+        unpickle anything outside a small allowlist. A checkpoint's ``client_state`` is
+        arbitrary user data, so this round trip has to opt out of that.
+        """
+        training_engine = TorchTrainingEngine.from_params(
+            {
+                "train_config": {"step_id": "001", "work_dir": self.TEST_DIR},
+                "model": {"type": "dummy_model"},
+                "optimizer": {"type": "torch::Adam"},
+                "lr_scheduler": {"type": "torch::StepLR", "step_size": 1},
+            }
+        )
+
+        # `TorchTrainStep` puts each callback's `state_dict()` into the client state, so this
+        # can hold anything at all. A numpy array is enough to trip the allowlist.
+        client_state = {
+            "training_steps": 7,
+            "callbacks": [{"running_loss": np.zeros(3)}],
+        }
+        training_engine.save_checkpoint(self.TEST_DIR, client_state)
+
+        assert (self.TEST_DIR / "worker0_model.pt").is_file()
+        assert (self.TEST_DIR / "worker0_lr_scheduler.pt").is_file()
+
+        loaded = training_engine.load_checkpoint(self.TEST_DIR)
+        assert loaded["training_steps"] == 7
+        assert loaded["callbacks"][0]["running_loss"].shape == (3,)
 
 
 @pytest.mark.gpu

@@ -18,7 +18,7 @@ authors = [
     {name = "Allen Institute for Artificial Intelligence", email = "contact@allenai.org"}
 ]
 license = {file = "LICENSE"}
-requires-python = ">=3.8.1"
+requires-python = ">=3.10"
 dependencies = [
   "cached-path>=1.0,<2.0",
   "rjsonnet>=0.5.0",
@@ -27,28 +27,24 @@ dependencies = [
   "dill",
   "base58",
   "xxhash",
-  "filelock>=3.4,<4.0",
-  "click>=8.0,<8.1.4",
-  "click-help-colors>=0.9.1,<0.10",
-  "rich>=12.3,<14.0",
+  "filelock>=3.4",
+  "click>=8.0",
+  "click-help-colors>=0.9.1",
+  "rich>=12.3",
   "tqdm>=4.62,<5.0",
-  "more-itertools>=8.0,<11.0",
+  "more-itertools>=8.0",
   "sqlitedict",
-  "glob2>=0.7",
   "petname>=2.6,<3.0",
-  "pytz"
 ]
 
 [project.optional-dependencies]
 dev = [
   "ruff",
-  "mypy==1.2.0",
+  "mypy>=1.11",
   "types-PyYAML",
   "types-setuptools",
-  "types-pytz",
-  "types-retry",
-  "black==23.3.0",
-  "isort==5.12.0",
+  "black>=24.0",
+  "isort>=5.13",
   "pytest",
   "pytest-sphinx",
   "flaky",
@@ -56,58 +52,34 @@ dev = [
   "setuptools",
   "wheel",
   "build",
-  "Sphinx==5.3.0",
-  "furo==2023.3.27",
-  "myst-parser==1.0.0",
-  "sphinx-copybutton==0.5.2",
-  "sphinx-autobuild==2021.3.14",
-  "sphinx-autodoc-typehints<=1.23.0",
+  "Sphinx>=7.2",
+  "furo>=2024.1",
+  "myst-parser>=2.0",
+  "sphinx-copybutton>=0.5.2",
+  "sphinx-autobuild>=2024.2",
+  "sphinx-autodoc-typehints>=2.0",
   "packaging"
 ]
 examples = [
   "torchmetrics>=0.7.0"
 ]
 torch = [
-  "torch>=1.9,<2.1",
+  "torch>=2.1",
   "numpy",
 ]
 transformers = [
-  "torch>=1.9,<2.1",
+  "torch>=2.1",
   "numpy",
-  "datasets>=1.12,<3.0",
-  "transformers>=4.12.3",
-  "sentencepiece==0.1.98",
+  "datasets>=2.14",
+  "transformers>=4.40",
+  "sentencepiece>=0.2",
   "sacremoses"
 ]
 datasets = [
-  "datasets>=1.12,<3.0"
-]
-fairscale = [
-  "torch>=1.9,<2.1",
-  "numpy",
-  "fairscale>=0.4.6,<0.5"
-]
-flax = [
-  "datasets>=1.12,<3.0",
-  "jax",
-  "jaxlib",
-  "flax",
-  "optax",
-  "tensorflow-cpu>=2.9.1"
-]
-wandb = [
-  "wandb>=0.16",
-  "retry"
-]
-beaker = [
-  "beaker-py>=1.14.0,<2.0"
-]
-gs = [
-  "google-cloud-storage>=2.6.0",
-  "google-cloud-datastore>=2.12.0"
+  "datasets>=2.14"
 ]
 all = [
-  "ai2-tango[examples,torch,transformers,datasets,fairscale,flax,wandb,beaker,gs]"
+  "ai2-tango[examples,torch,transformers,datasets]"
 ]
 
 [project.scripts]
@@ -132,7 +104,6 @@ exclude = [
 
 [tool.setuptools.package-data]
 tango = ["py.typed"]
-"tango.integrations.beaker" = ["*.sh"]
 
 [tool.setuptools.dynamic]
 version = {attr = "tango.version.VERSION"}
@@ -159,7 +130,6 @@ multi_line_output = 3
 
 [tool.ruff]
 line-length = 115
-select = ["E"]
 exclude = [
   ".venv",
   ".git",
@@ -169,7 +139,10 @@ exclude = [
   "dist"
 ]
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint]
+select = ["E"]
+
+[tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "*/**/**/__init__.py" = ["F401","E501"]
 
@@ -201,10 +174,6 @@ markers = [
   "gpu: marks tests that need GPUs"
 ]
 filterwarnings = [
-  'ignore:.*Consider increasing the value of the `num_workers` argument.*:UserWarning:pytorch_lightning\.trainer\.data_loading',
-  'ignore:.*you defined a validation_step but have no val_dataloader.*:UserWarning:pytorch_lightning\.trainer\.configuration_validator',
   'ignore::UserWarning:tango\.*',
-  'ignore::DeprecationWarning:pkg_resources',
-  'ignore::DeprecationWarning:google\.rpc'
 ]
 doctest_optionflags = "NORMALIZE_WHITESPACE"

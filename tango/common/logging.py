@@ -11,8 +11,8 @@ When using the `Tango CLI <./commands.html>`_ you can set the log level in sever
 2. With the environment variable ``TANGO_LOG_LEVEL``.
 3. Or with the ``--log-level`` command-line option.
 
-In some cases (like when running on `Beaker <https://beaker.org>`_) you may also want
-to enable `"file friendly logging" <#tango.common.logging.FILE_FRIENDLY_LOGGING>`_.
+In some cases (like when running on a cluster that captures stdout to a file) you may also
+want to enable `"file friendly logging" <#tango.common.logging.FILE_FRIENDLY_LOGGING>`_.
 
 Configuring logging in your own CLI
 -----------------------------------

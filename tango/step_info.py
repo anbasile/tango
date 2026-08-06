@@ -5,11 +5,10 @@ import platform
 import socket
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import pytz
 
 from .common.from_params import FromParams
 from .common.logging import log_exception
@@ -24,12 +23,17 @@ def get_pip_packages() -> Optional[List[Tuple[str, str]]]:
     """
     Get the current working set of pip packages. Equivalent to running ``pip freeze``.
     """
-    # Adapted from the Weights & Biases client library:
-    # github.com/wandb/client/blob/a04722575eee72eece7eef0419d0cea20940f9fe/wandb/sdk/internal/meta.py#L56-L72
     try:
-        import pkg_resources
+        from importlib.metadata import distributions
 
-        return sorted([(d.key, d.version) for d in iter(pkg_resources.working_set)])
+        packages = []
+        for dist in distributions():
+            # A malformed distribution can be missing its metadata entirely, and duplicate
+            # entries show up when the same package is installed in several path entries.
+            name = (dist.metadata or {}).get("Name")
+            if name:
+                packages.append((name.lower(), dist.version))
+        return sorted(set(packages))
     except Exception as exc:
         logger.error("Error saving pip packages")
         log_exception(exc)
@@ -303,7 +307,7 @@ class StepInfo(FromParams):
         step_info = cls.from_params(
             {
                 k: (
-                    datetime.strptime(v, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=pytz.utc)
+                    datetime.strptime(v, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
                     if k in {"start_time", "end_time"} and v is not None
                     else v
                 )

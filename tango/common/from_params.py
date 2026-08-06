@@ -499,7 +499,7 @@ def construct_arg(
     #  2. The item in the index-able object matches `annotation`.
     #
     # But that's complex and might have false negatives.
-    elif type(popped_params) == StepIndexer:
+    elif type(popped_params) is StepIndexer:
         return popped_params
 
     # If the parameter type is a Python primitive, just pop it off
@@ -512,7 +512,7 @@ def construct_arg(
                 f"Expected {argument_name} to be {annotation.__name__}, "
                 f"found {popped_params} ({type(popped_params)})."
             )
-    elif annotation == str:
+    elif annotation is str:
         # Strings are special because we allow casting from Path to str.
         if isinstance(popped_params, str) or isinstance(popped_params, Path):
             return str(popped_params)  # type: ignore
@@ -520,7 +520,7 @@ def construct_arg(
             raise TypeError(
                 f"Expected {argument_name} to be a string, found {popped_params} ({type(popped_params)})"
             )
-    elif annotation == float:
+    elif annotation is float:
         # Floats are special because in Python, you can put an int wherever you can put a float.
         # https://mypy.readthedocs.io/en/stable/duck_type_compatibility.html
         if type(popped_params) in {int, float}:

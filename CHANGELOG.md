@@ -7,10 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+Modernisation pass: Tango now runs on a current Python and ML stack. The core was already
+compatible — the version caps in `pyproject.toml` were stale rather than load-bearing — so most
+of this release is removing dead surface and unpinning.
+
+### Removed
+
+- **Dropped the `beaker` integration.** Beaker is AI2-internal infrastructure, and `beaker-py` 2.x
+  is an unrelated gRPC rewrite. This also removes the hidden `tango beaker-executor-run` command,
+  `Dockerfile.test`, and the Beaker-dependent CI workflows.
+- **Dropped the `fairscale` integration.** FairScale's last release was December 2022. PyTorch's
+  native `torch.distributed.fsdp` is the replacement; see issues #332 and #266.
+- **Dropped the `flax` integration.** `flax.training.checkpoints` has been superseded by Orbax,
+  JAX now requires Python ≥3.12, and transformers v5 removed Flax entirely — which also kills the
+  `FlaxAutoModel` bridge in the transformers integration.
+- **Dropped the `wandb` and `gs` integrations.** `LocalWorkspace` and `MemoryWorkspace` remain.
+  Both integrations are self-contained and recoverable from git history.
+- Dropped the `glob2` dependency, which nothing imported, and the `pytz` dependency, replaced by
+  stdlib `datetime.timezone`.
+- Dropped the hard `sentencepiece==0.1.98` pin, which had no wheels for Python ≥3.11 and which
+  Tango never imported.
+
+### Changed
+
+- **`requires-python` is now `>=3.10`.** Python 3.8 and 3.9 are both end-of-life, and torch,
+  transformers, datasets and click all require 3.10 or newer.
+- Lifted the upper bounds on `torch` (was `<2.1`), `datasets` (was `<3.0`), `click` (was `<8.1.4`),
+  `rich` (was `<14.0`), `more-itertools` (was `<11.0`) and `filelock`. All verified working.
+- Loosened the exact pins on the dev and docs toolchain (`mypy`, `black`, `isort`, Sphinx, furo,
+  myst-parser, sphinx-autobuild, sphinx-autodoc-typehints).
+- Moved `[tool.ruff] select` and `per-file-ignores` under `[tool.ruff.lint]`, as required by
+  ruff ≥0.2.
+- CI: matrix is now Python 3.10–3.13; `actions/upload-artifact` and `download-artifact` moved from
+  v3 (shut down January 2025) to v4, plus `checkout@v4`, `setup-python@v5`, `cache@v4`.
+- The `Dockerfile` base image is now `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime` instead of a
+  stale internal AI2 image.
+- The `datasets` integration tests no longer reach out to the HuggingFace Hub; they load local
+  JSONL fixtures instead.
+
 ### Fixed
 
-- Fixed a bunch of dependencies
-- Upgraded to new version of wandb
+- `StepInfo` no longer loses its pip-freeze provenance. `get_pip_packages()` used `pkg_resources`,
+  which is absent from modern virtualenvs and Python ≥3.12, so it was silently returning `None`.
+  It now uses `importlib.metadata`.
+- **Checkpoint resume works again on torch ≥2.6.** `torch.load` flipped its `weights_only` default
+  to `True`, which refuses to unpickle the arbitrary objects Tango stores in a checkpoint's
+  `client_state`. The workspace's own checkpoints are now loaded with `weights_only=False`.
+- Replaced the deprecated `torch.cuda.amp.GradScaler()` with `torch.amp.GradScaler(device_type)`.
+- `transformers::` components import again on transformers v5: the Flax auto-model block is gone,
+  `Conv1D` is imported from `transformers.pytorch_utils`, and the unused `MODEL_CLASSES` table no
+  longer pulls in the removed Transformer-XL classes.
+- `datasets::load` and `datasets::load_streaming` now accept mapping arguments such as
+  `data_files` from a config. Nested mappings in a step's `**kwargs` arrive as `Params`, which
+  HuggingFace treated as a list of paths.
+- Replaced `datetime.utcnow()`, deprecated since Python 3.12, with `datetime.now(timezone.utc)`.
 
 ## [v1.3.2](https://github.com/allenai/tango/releases/tag/v1.3.2) - 2023-10-27
 

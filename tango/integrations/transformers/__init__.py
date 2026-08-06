@@ -51,7 +51,7 @@ library under the corresponding class from the `torch <torch.html>`_ integration
                     available_models.append(name)
 
 - :class:`~tango.integrations.torch.Optimizer`: All optimizers from transformers are registered according
-  to their class names (e.g. "transformers::AdaFactor").
+  to their class names (e.g. "transformers::Adafactor").
 
   .. tip::
 
@@ -67,10 +67,10 @@ library under the corresponding class from the `torch <torch.html>`_ integration
                     print(name)
 
         .. testoutput::
+            :options: +ELLIPSIS
 
             transformers::Adafactor
-            transformers::AdamW
-            transformers::LayerWiseDummyOptimizer
+            ...
 
 - :class:`~tango.integrations.torch.LRScheduler`: All learning rate scheduler function from transformers
   are registered according to their type name (e.g. "transformers::linear").
@@ -89,16 +89,13 @@ library under the corresponding class from the `torch <torch.html>`_ integration
                     print(name)
 
         .. testoutput::
+            :options: +ELLIPSIS
 
             transformers::constant
             transformers::constant_with_warmup
-            transformers::cosine
-            transformers::cosine_with_min_lr
-            transformers::cosine_with_restarts
-            transformers::inverse_sqrt
+            ...
             transformers::linear
-            transformers::polynomial
-            transformers::reduce_lr_on_plateau
+            ...
 
 - :class:`~tango.integrations.torch.DataCollator`: All data collators from transformers
   are registered according to their class name (e.g. "transformers::DefaultDataCollator").
@@ -130,13 +127,10 @@ library under the corresponding class from the `torch <torch.html>`_ integration
                     print(name)
 
         .. testoutput::
+            :options: +ELLIPSIS
 
             transformers::DataCollatorForLanguageModeling
-            transformers::DataCollatorForPermutationLanguageModeling
-            transformers::DataCollatorForSOP
-            transformers::DataCollatorForSeq2Seq
-            transformers::DataCollatorForTokenClassification
-            transformers::DataCollatorForWholeWordMask
+            ...
             transformers::DataCollatorWithPadding
             transformers::DefaultDataCollator
 

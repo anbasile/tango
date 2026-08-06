@@ -10,21 +10,9 @@ from transformers import (
     AutoModelForCausalLM,
     AutoModelForSeq2SeqLM,
     AutoTokenizer,
-    CTRLLMHeadModel,
-    CTRLTokenizer,
-    GPT2LMHeadModel,
-    GPT2Tokenizer,
-    OpenAIGPTLMHeadModel,
-    OpenAIGPTTokenizer,
     PreTrainedModel,
     PreTrainedTokenizer,
     PreTrainedTokenizerFast,
-    TransfoXLLMHeadModel,
-    TransfoXLTokenizer,
-    XLMTokenizer,
-    XLMWithLMHeadModel,
-    XLNetLMHeadModel,
-    XLNetTokenizer,
 )
 
 from tango import Format, JsonFormat, SqliteDictFormat, Step
@@ -43,16 +31,7 @@ logger = logging.getLogger(__name__)
 
 MAX_LENGTH = int(10000)  # Hardcoded max length to avoid infinite loop
 
-MODEL_CLASSES = {
-    "gpt2": (GPT2LMHeadModel, GPT2Tokenizer),
-    "ctrl": (CTRLLMHeadModel, CTRLTokenizer),
-    "openai-gpt": (OpenAIGPTLMHeadModel, OpenAIGPTTokenizer),
-    "xlnet": (XLNetLMHeadModel, XLNetTokenizer),
-    "transfo-xl": (TransfoXLLMHeadModel, TransfoXLTokenizer),
-    "xlm": (XLMWithLMHeadModel, XLMTokenizer),
-}
-
-# Padding text to help Transformer-XL and XLNet with short prompts as proposed by Aman Rusia
+# Padding text to help XLNet with short prompts as proposed by Aman Rusia
 # in https://github.com/rusiaaman/XLNet-gen#methodology
 # and https://medium.com/@amanrusia/xlnet-speaks-comparison-to-gpt-2-ea1a4e9ba39e
 PREFIX = """In 1991, the remains of Russian Tsar Nicholas II and his family
@@ -137,7 +116,7 @@ def _generate(
         model.half()
 
     def prepare_batch_without_prefix(prompts: List[str]) -> Dict[str, torch.Tensor]:
-        result = tokenizer.batch_encode_plus(
+        result = tokenizer(
             prompts,
             add_special_tokens=False,
             return_tensors="pt",
@@ -164,12 +143,8 @@ def _generate(
             # Original HF code ignores the prefix, but it looks like a bug?
             prepare_batch_fn = prepare_batch_without_prefix
             num_prefix_tokens = 0
-        elif model.config_class.model_type in {"xlnet", "transfo-xl"}:
+        elif model.config_class.model_type == "xlnet":
             prefix = prefix if prefix else PREFIX
-        if model.__class__.__name__ in ["TransfoXLLMHeadModel"]:
-            # This actually doesn't work in the current version of transformers, which is probably a bug in the
-            # transformers library.
-            tokenizer_kwargs = {"add_space_before_punct_symbol": True}
 
     if num_prefix_tokens is None:
         num_prefix_tokens = len(tokenizer.tokenize(prefix))

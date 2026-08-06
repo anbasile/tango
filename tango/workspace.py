@@ -2,7 +2,7 @@ import logging
 from abc import abstractmethod
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import (
@@ -19,7 +19,6 @@ from typing import (
 )
 from urllib.parse import ParseResult, urlparse
 
-import pytz
 
 from .common import Registrable
 from .common.from_params import FromParams
@@ -64,7 +63,7 @@ class Run(FromParams):
     def from_json_dict(cls, json_dict: Dict[str, Any]) -> "Run":
         params = {**json_dict}
         params["start_date"] = datetime.strptime(params["start_date"], "%Y-%m-%dT%H:%M:%S").replace(
-            tzinfo=pytz.utc
+            tzinfo=timezone.utc
         )
         params["steps"] = {k: StepInfo.from_json_dict(v) for k, v in params["steps"].items()}
         return cls.from_params(params)

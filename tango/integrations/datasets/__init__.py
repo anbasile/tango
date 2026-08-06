@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, TypeVar, Union, overload
 from tango.common.aliases import PathOrStr
 from tango.common.dataset_dict import DatasetDict, IterableDatasetDict
 from tango.common.exceptions import ConfigurationError, IntegrationMissingError
+from tango.common.params import Params
 from tango.format import Format
 from tango.step import Step
 
@@ -72,6 +73,24 @@ def convert_to_tango_dataset_dict(hf_dataset_dict):
         return IterableDatasetDict(splits=hf_dataset_dict)
     else:
         return DatasetDict(splits=hf_dataset_dict)
+
+
+def _plain(value: Any) -> Any:
+    """
+    Recursively turn :class:`~tango.common.params.Params` back into plain dicts.
+
+    Nested mappings in a step's ``**kwargs`` arrive as ``Params``, which HuggingFace has no
+    reason to understand: ``load_dataset(..., data_files={"train": ...})`` would otherwise see
+    a non-``dict`` mapping and fall back to treating it as a list of paths.
+    """
+    if isinstance(value, Params):
+        return _plain(value.as_dict(quiet=True))
+    elif isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [_plain(v) for v in value]
+    else:
+        return value
 
 
 T = Union[ds.Dataset, ds.DatasetDict]
@@ -128,7 +147,7 @@ class LoadDataset(Step):
         ``path`` is the canonical name or path to the dataset. Additional key word arguments
         are passed as-is to :func:`datasets.load_dataset()`.
         """
-        dataset = ds.load_dataset(path, **kwargs)
+        dataset = ds.load_dataset(path, **_plain(kwargs))
         if not isinstance(dataset, (ds.Dataset, ds.DatasetDict)):
             raise ConfigurationError(
                 f"{self.__class__.__name__} can only be used with non-streaming datasets. "
@@ -163,7 +182,7 @@ class LoadStreamingDataset(Step):
         ``path`` is the canonical name or path to the dataset. Additional key word arguments
         are passed as-is to :func:`datasets.load_dataset()`.
         """
-        dataset = ds.load_dataset(path, **kwargs)
+        dataset = ds.load_dataset(path, **_plain(kwargs))
         if not isinstance(dataset, (ds.IterableDataset, ds.IterableDatasetDict)):
             raise ConfigurationError(
                 f"{self.__class__.__name__} can only be used with streaming datasets. "
@@ -249,9 +268,13 @@ class DatasetRemixStep(Step):
         initialize_logging(enable_cli_logs=True)
         import datasets
 
+        input = datasets.DatasetDict(
+            train=datasets.Dataset.from_dict({"text": ["a", "b"]}),
+            validation=datasets.Dataset.from_dict({"text": ["c", "d", "e"]}),
+        )
+
     .. testcode::
 
-        input = datasets.load_dataset("lhoestq/test")
         new_splits = {
             "all": "train + validation",
             "crossval_train": "train[:1] + validation[1:]",

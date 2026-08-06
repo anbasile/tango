@@ -2,12 +2,20 @@
     "steps": {
         "train_data": {
             "type": "datasets::load",
-            "path": "lhoestq/test",
+            "path": "json",
+            "data_files": {
+                "train": "test_fixtures/integrations/datasets/train.jsonl",
+                "validation": "test_fixtures/integrations/datasets/validation.jsonl"
+            },
             "split": "train"
         },
         "dev_data": {
             "type": "datasets::load",
-            "path": "lhoestq/test",
+            "path": "json",
+            "data_files": {
+                "train": "test_fixtures/integrations/datasets/train.jsonl",
+                "validation": "test_fixtures/integrations/datasets/validation.jsonl"
+            },
             "split": "validation"
         },
         "all_data": {
