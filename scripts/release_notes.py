@@ -67,7 +67,10 @@ def get_commit_history() -> str:
     if last_tag is not None:
         commits = os.popen(f"git log {last_tag}..{TAG}^ --oneline --first-parent").read()
     else:
-        commits = os.popen("git log --oneline --first-parent").read()
+        # No earlier tag in this repository. This fork was cut from allenai/tango without
+        # carrying its tags over — pushing them would fire the release workflow once per tag —
+        # so fall back to a bounded list rather than dumping the entire upstream history.
+        commits = os.popen(f"git log {TAG}^ --oneline --first-parent -n 25").read()
     return "## Commits\n\n" + commits
 
 
