@@ -116,7 +116,7 @@ jobs:
     steps:
       # Some tests depend on there being an existing commit, so for pull requests we check out
       # the HEAD commit rather than the merge commit.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
