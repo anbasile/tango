@@ -81,9 +81,9 @@ class LocalWorkspace(Workspace):
                     # ends up being a `StepInfo` instance that is missing the `cacheable` member. This
                     # hack adds it in.
                     kwargs = stepinfo.__dict__
-                    kwargs[
-                        "cacheable"
-                    ] = True  # Only cacheable steps were saved in v1. That's what v2 fixes.
+                    kwargs["cacheable"] = (
+                        True  # Only cacheable steps were saved in v1. That's what v2 fixes.
+                    )
                     d[stepinfo.unique_id] = StepInfo(**kwargs)
                 d.commit()
             for stepinfo_file in self.cache.dir.glob("*/stepinfo.dill"):

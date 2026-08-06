@@ -67,6 +67,7 @@ The ``settings`` group of commands can be used to initialize a :class:`~tango.se
 file or update fields in it.
 
 """
+
 import os
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Union
@@ -298,7 +299,7 @@ def info(obj: SettingsObject):
     # Show info about settings.
     if obj.settings.path is not None:
         cli_logger.info("[underline]Settings:[/]")
-        cli_logger.info("[green] \N{check mark} Loaded from %s[/]", obj.settings.path)
+        cli_logger.info("[green] \N{CHECK MARK} Loaded from %s[/]", obj.settings.path)
         if obj.settings.include_package:
             cli_logger.info("   Included packages:")
             for package in obj.settings.include_package:
@@ -308,9 +309,9 @@ def info(obj: SettingsObject):
                 except (ModuleNotFoundError, ImportError):
                     is_found = False
                 if is_found:
-                    cli_logger.info("   [green]\N{check mark} %s[/]", package)
+                    cli_logger.info("   [green]\N{CHECK MARK} %s[/]", package)
                 else:
-                    cli_logger.info("   [red]\N{ballot x} %s (not found)[/]", package)
+                    cli_logger.info("   [red]\N{BALLOT X} %s (not found)[/]", package)
         cli_logger.info("")
 
     # Show info about integrations.
@@ -323,9 +324,9 @@ def info(obj: SettingsObject):
         except (IntegrationMissingError, ModuleNotFoundError, ImportError):
             is_installed = False
         if is_installed:
-            cli_logger.info(" [green]\N{check mark} %s[/]", name)
+            cli_logger.info(" [green]\N{CHECK MARK} %s[/]", name)
         else:
-            cli_logger.info(" [yellow]\N{ballot x} %s (not installed)[/]", name)
+            cli_logger.info(" [yellow]\N{BALLOT X} %s (not installed)[/]", name)
 
 
 @main.group(**_CLICK_GROUP_DEFAULTS)
@@ -360,7 +361,7 @@ def init(obj: SettingsObject, path: Optional[str] = None, force: bool = False):
         raise click.ClickException("Settings file already exists! Use -f/--force to overwrite it.")
     obj.settings.to_file(path_to_write)
     cli_logger.info(
-        "[green]\N{check mark} Settings file written to [bold]%s[/bold][/green]", path_to_write
+        "[green]\N{CHECK MARK} Settings file written to [bold]%s[/bold][/green]", path_to_write
     )
 
 

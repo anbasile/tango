@@ -73,9 +73,11 @@ class BatchSampler(torch.utils.data.BatchSampler, Sampler):
         drop_last: bool,
     ) -> None:
         super().__init__(
-            sampler.construct(data_source=dataset, dataset=dataset)
-            if isinstance(sampler, Lazy)
-            else sampler,
+            (
+                sampler.construct(data_source=dataset, dataset=dataset)
+                if isinstance(sampler, Lazy)
+                else sampler
+            ),
             batch_size,
             drop_last,
         )
@@ -111,9 +113,11 @@ class DataLoader(torch.utils.data.DataLoader, Registrable):
         super().__init__(
             dataset,
             collate_fn=collate_fn,
-            sampler=sampler.construct(data_source=dataset, dataset=dataset)
-            if isinstance(sampler, Lazy)
-            else sampler,
+            sampler=(
+                sampler.construct(data_source=dataset, dataset=dataset)
+                if isinstance(sampler, Lazy)
+                else sampler
+            ),
             **kwargs,
         )
 

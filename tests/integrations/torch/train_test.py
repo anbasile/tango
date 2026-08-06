@@ -26,10 +26,12 @@ class TestTrainStep(TangoTestCase):
                 "test_fixtures.integrations.common",
                 "test_fixtures.integrations.torch",
             ],
-            overrides=""
-            if with_validation
-            else json.dumps(
-                {"steps.train.validation_split": None, "steps.train.validate_every": None}
+            overrides=(
+                ""
+                if with_validation
+                else json.dumps(
+                    {"steps.train.validation_split": None, "steps.train.validate_every": None}
+                )
             ),
         )
         assert (result_dir / "train" / "data.pt").is_file()

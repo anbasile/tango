@@ -90,16 +90,14 @@ class TestParams(TangoTestCase):
     def test_jsonnet_features(self):
         config_file = self.TEST_DIR / "config.jsonnet"
         with open(config_file, "w") as f:
-            f.write(
-                """{
+            f.write("""{
                             // This example is copied straight from the jsonnet docs
                             person1: {
                                 name: "Alice",
                                 welcome: "Hello " + self.name + "!",
                             },
                             person2: self.person1 { name: "Bob" },
-                        }"""
-            )
+                        }""")
 
         params = Params.from_file(config_file)
 

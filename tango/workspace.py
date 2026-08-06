@@ -19,7 +19,6 @@ from typing import (
 )
 from urllib.parse import ParseResult, urlparse
 
-
 from .common import Registrable
 from .common.from_params import FromParams
 from .common.util import StrEnum, jsonify, utc_now_datetime

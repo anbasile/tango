@@ -31,9 +31,11 @@ def load_settings(settings: Union[str, Params, dict, None] = None) -> TangoGloba
     return (
         TangoGlobalSettings.from_file(settings)
         if isinstance(settings, str)
-        else TangoGlobalSettings.from_params(settings)
-        if isinstance(settings, (Params, dict))
-        else TangoGlobalSettings.default()
+        else (
+            TangoGlobalSettings.from_params(settings)
+            if isinstance(settings, (Params, dict))
+            else TangoGlobalSettings.default()
+        )
     )
 
 
@@ -205,9 +207,9 @@ def execute_step_graph(
         executor_output: ExecutorOutput = executor.execute_step_graph(step_graph, run_name=run.name)
 
         if executor_output.failed:
-            cli_logger.error("[red]\N{ballot x} Run [bold]%s[/] finished with errors[/]", run.name)
+            cli_logger.error("[red]\N{BALLOT X} Run [bold]%s[/] finished with errors[/]", run.name)
         elif not called_by_executor:
-            cli_logger.info("[green]\N{check mark} Finished run [bold]%s[/][/]", run.name)
+            cli_logger.info("[green]\N{CHECK MARK} Finished run [bold]%s[/][/]", run.name)
 
         if executor_output is not None:
             if not called_by_executor:

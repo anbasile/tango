@@ -272,9 +272,9 @@ class Step(Registrable, Generic[T]):
             )
 
         self._workspace: Optional["Workspace"] = None
-        self.work_dir_for_run: Optional[
-            Path
-        ] = None  # This is set only while the run() method runs.
+        self.work_dir_for_run: Optional[Path] = (
+            None  # This is set only while the run() method runs.
+        )
         if isinstance(step_config, Params):
             self._config = step_config.as_dict(quiet=True)
         else:
@@ -737,47 +737,47 @@ class Step(Registrable, Generic[T]):
     def log_cache_hit(self, needed_by: Optional["Step"] = None) -> None:
         if needed_by is not None:
             cli_logger.info(
-                '[green]\N{check mark} Found output for step [bold]"%s"[/bold] in cache '
+                '[green]\N{CHECK MARK} Found output for step [bold]"%s"[/bold] in cache '
                 '(needed by "%s")...[/green]',
                 self.name,
                 needed_by.name,
             )
         else:
             cli_logger.info(
-                '[green]\N{check mark} Found output for step [bold]"%s"[/] in cache...[/]',
+                '[green]\N{CHECK MARK} Found output for step [bold]"%s"[/] in cache...[/]',
                 self.name,
             )
 
     def log_starting(self, needed_by: Optional["Step"] = None) -> None:
         if needed_by is not None:
             cli_logger.info(
-                '[blue]\N{black circle} Starting step [bold]"%s"[/] (needed by "%s")...[/]',
+                '[blue]\N{BLACK CIRCLE} Starting step [bold]"%s"[/] (needed by "%s")...[/]',
                 self.name,
                 needed_by.name,
             )
         else:
             cli_logger.info(
-                '[blue]\N{black circle} Starting step [bold]"%s"[/]...[/]',
+                '[blue]\N{BLACK CIRCLE} Starting step [bold]"%s"[/]...[/]',
                 self.name,
             )
 
     def log_finished(self, run_name: Optional[str] = None) -> None:
         if run_name is not None:
             cli_logger.info(
-                '[green]\N{check mark} Finished run for step [bold]"%s"[/] (%s)[/]',
+                '[green]\N{CHECK MARK} Finished run for step [bold]"%s"[/] (%s)[/]',
                 self.name,
                 run_name,
             )
         else:
             cli_logger.info(
-                '[green]\N{check mark} Finished step [bold]"%s"[/][/]',
+                '[green]\N{CHECK MARK} Finished step [bold]"%s"[/][/]',
                 self.name,
             )
 
     def log_failure(self, exception: Optional[BaseException] = None) -> None:
         if exception is not None:
             log_exception(exception, logger=self.logger)
-        cli_logger.error('[red]\N{ballot x} Step [bold]"%s"[/] failed[/]', self.name)
+        cli_logger.error('[red]\N{BALLOT X} Step [bold]"%s"[/] failed[/]', self.name)
 
 
 class FunctionalStep(Step):

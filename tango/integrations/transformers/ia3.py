@@ -276,9 +276,12 @@ def modify_with_ia3(
                     new_module = adaptor_class(
                         layer,  # type: ignore[arg-type]
                         config.ia3_param_names,
-                        unfuse_size=transformer.config.hidden_size  # type: ignore
-                        if config.fused_qkv_layers and re.fullmatch(config.fused_qkv_layers, c_name)
-                        else None,
+                        unfuse_size=(
+                            transformer.config.hidden_size  # type: ignore
+                            if config.fused_qkv_layers
+                            and re.fullmatch(config.fused_qkv_layers, c_name)
+                            else None
+                        ),
                     )
                     setattr(module, c_name, new_module)
 

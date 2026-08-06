@@ -11,7 +11,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Optional, Set, Tuple, Union
 
-
 from .exceptions import SigTermReceived
 
 

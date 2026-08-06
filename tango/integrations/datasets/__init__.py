@@ -22,7 +22,6 @@ You could run this with:
 
 """
 
-
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TypeVar, Union, overload
@@ -51,8 +50,7 @@ __all__ = [
 
 
 @overload
-def convert_to_tango_dataset_dict(hf_dataset_dict: ds.DatasetDict) -> DatasetDict:
-    ...
+def convert_to_tango_dataset_dict(hf_dataset_dict: ds.DatasetDict) -> DatasetDict: ...
 
 
 @overload

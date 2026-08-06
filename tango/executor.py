@@ -61,14 +61,14 @@ class ExecutorOutput:
             status_str: str
             result_str: str = "[grey62]N/A[/]"
             if step_name in self.failed:
-                status_str = "[red]\N{ballot x} failed[/]"
+                status_str = "[red]\N{BALLOT X} failed[/]"
                 execution_metadata = self.failed[step_name]
                 if execution_metadata.logs_location is not None:
                     result_str = f"[cyan]{execution_metadata.logs_location}[/]"
             elif step_name in self.not_run:
                 status_str = "[yellow]- not run[/]"
             elif step_name in self.successful:
-                status_str = "[green]\N{check mark} succeeded[/]"
+                status_str = "[green]\N{CHECK MARK} succeeded[/]"
                 execution_metadata = self.successful[step_name]
                 if execution_metadata.result_location is not None:
                     result_str = f"[cyan]{execution_metadata.result_location}[/]"
@@ -81,10 +81,10 @@ class ExecutorOutput:
 
         caption_parts: List[str] = []
         if self.failed:
-            caption_parts.append(f"[red]\N{ballot x}[/] [italic]{len(self.failed)} failed[/]")
+            caption_parts.append(f"[red]\N{BALLOT X}[/] [italic]{len(self.failed)} failed[/]")
         if self.successful:
             caption_parts.append(
-                f"[green]\N{check mark}[/] [italic]{len(self.successful)} succeeded[/]"
+                f"[green]\N{CHECK MARK}[/] [italic]{len(self.successful)} succeeded[/]"
             )
         if self.not_run:
             caption_parts.append(f"[italic]{len(self.not_run)} not run[/]")

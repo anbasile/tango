@@ -11,7 +11,7 @@ from time import time
 from typing import Optional
 
 try:
-    SHELL = str(type(get_ipython()))  # type:ignore # noqa: F821
+    SHELL = str(type(get_ipython()))  # type: ignore # noqa: F821
 except:  # noqa: E722
     SHELL = ""
 
