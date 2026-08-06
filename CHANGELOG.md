@@ -61,6 +61,19 @@ of this release is removing dead surface and unpinning.
   `data_files` from a config. Nested mappings in a step's `**kwargs` arrive as `Params`, which
   HuggingFace treated as a list of paths.
 - Replaced `datetime.utcnow()`, deprecated since Python 3.12, with `datetime.now(timezone.utc)`.
+- `transformers::run_generation` works on transformers v5: `tokenizer.batch_encode_plus()` is now a
+  plain tokenizer call, and the unused `MODEL_CLASSES` table no longer imports the removed
+  Transformer-XL classes.
+- `transformers::finetune` uses `tokenizer(text_target=...)` instead of the removed
+  `as_target_tokenizer()` context manager.
+- `add_soft_prompt` works on transformers v5. Three separate breakages: `generate()` now validates
+  its keyword arguments against the signature of `model.forward`, which the patched forward hid;
+  `generate()` passes an *empty* cache on the first step rather than `None`, so the "already
+  running" guard short-circuited and the prompt was silently never applied; and `logits_to_keep`
+  means the LM head may return only the last position, which the un-patching would trim to nothing.
+- The `train_lm` and `finetune_resnet` examples point at dataset repos that still resolve.
+  Bare ids (`wikitext`, `snli`) need a namespace now, and `nateraw/auto-cats-and-dogs` was a
+  loading-script dataset, replaced by `microsoft/cats_vs_dogs`.
 
 ## [v1.3.2](https://github.com/allenai/tango/releases/tag/v1.3.2) - 2023-10-27
 

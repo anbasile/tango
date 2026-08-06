@@ -31,8 +31,7 @@ local single_device_dataloader = {
     steps: {
         raw_data: {
             type: "datasets::load",
-            path: "nateraw/auto-cats-and-dogs",
-            name: "cats_and_dogs",
+            path: "microsoft/cats_vs_dogs",
         },
         transform_data: {
             type: "transform_data",

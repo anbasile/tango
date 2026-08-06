@@ -77,20 +77,23 @@ def get_data_transforms(input_size: int):
     return data_transforms
 
 
-# loads and image and applies the appropriate transformation
+# applies the appropriate transformation to an already-open PIL image
+def transform_image(image: Image.Image, input_size: int, transform_type: str):
+    transform = get_data_transforms(input_size=input_size)[transform_type]
+    return transform(image.convert("RGB"))
+
+
+# loads an image from a path and applies the appropriate transformation
 def pil_loader(path: str, input_size: int, transform_type: str):
     with open(path, "rb") as f:
-        image = Image.open(f)
-        image = image.convert("RGB")
-        transform = get_data_transforms(input_size=input_size)[transform_type]
-        transformed_image = transform(image)
-        return transformed_image
+        return transform_image(Image.open(f), input_size, transform_type)
 
 
 # calls the image loader on every image in a given batch
 def image_loader(example_batch, input_size: int, transform_type: str):
+    # 🤗 Datasets decodes the "image" column to PIL images for us.
     example_batch["image"] = [
-        pil_loader(f, input_size, transform_type) for f in example_batch["file"]
+        transform_image(image, input_size, transform_type) for image in example_batch["image"]
     ]
     return example_batch
 

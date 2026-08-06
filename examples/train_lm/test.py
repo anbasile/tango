@@ -13,7 +13,7 @@ def test_small_experiment():
         "steps.tokenized_data.block_size": 64,
         # Override the model in the config with the tiny alternative so training is fast.
         "steps.tokenized_data.tokenizer.pretrained_model_name_or_path": model,
-        "steps.trained_model.model.model.pretrained_model_name_or_path": model,
+        "steps.trained_model.model.pretrained_model_name_or_path": model,
         # Use a small number of training/validation/eval steps.
         "steps.trained_model.training_engine.lr_scheduler.num_warmup_steps": 1,
         "steps.trained_model.training_engine.lr_scheduler.num_training_steps": steps,

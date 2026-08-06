@@ -65,7 +65,7 @@ local dataloader = if devices > 1 then distributed_dataloader else single_device
     steps: {
         raw_data: {
             type: "datasets::load",
-            path: "snli",
+            path: "stanfordnlp/snli",
         },
         /*"subset_data": {
             type: "subset-data",

@@ -15,7 +15,7 @@ class TestFinetuneSNLI(TangoTestCase):
     @typing.no_type_check  # mypy has become incompatible with the datasets library
     def test_config(self, model: str, model_type: str):
         overrides = {
-            "steps.trained_model.model.model.pretrained_model_name_or_path": model,
+            "steps.trained_model.model.pretrained_model_name_or_path": model,
             "steps.trained_model.tokenizer.pretrained_model_name_or_path": model,
             "steps.subset_data": {
                 "type": "subset-data",

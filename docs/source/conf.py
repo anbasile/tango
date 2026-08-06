@@ -43,7 +43,14 @@ extensions = [
     "sphinx_autodoc_typehints",
 ]
 
-suppress_warnings = ["myst.header"]
+suppress_warnings = [
+    "myst.header",
+    # transformers annotates public classes with names it only imports under `TYPE_CHECKING`
+    # (`torch`) and behind optional dependencies (`kernels`). Neither is resolvable from here,
+    # and neither is something this project can fix.
+    "sphinx_autodoc_typehints.forward_reference",
+    "sphinx_autodoc_typehints.guarded_import",
+]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]

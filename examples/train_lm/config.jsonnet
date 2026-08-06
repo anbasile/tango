@@ -73,7 +73,7 @@ local dataloader = if devices > 1 then distributed_dataloader else single_device
     steps: {
         raw_data: {
             type: "datasets::load",
-            path: "wikitext",
+            path: "Salesforce/wikitext",
             name: "wikitext-2-raw-v1",
         },
         tokenized_data: {
