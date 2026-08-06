@@ -204,8 +204,13 @@ def add_soft_prompt(
             if result.last_hidden_state is not None:
                 result.last_hidden_state = unpatch_tensor(result.last_hidden_state)
             # NOTE: as of transformers v5 `past_key_values` is a `Cache` object, not a tuple,
-            # so writing a tuple back is wrong. Porting this properly needs the Cache API; the
-            # branch is unreachable for LM-head models today (see below), so it is left as-is.
+            # so writing a tuple back is wrong. Porting it properly needs the Cache API.
+            #
+            # Left as-is because nothing appears to reach this branch on transformers v5:
+            # encoder-decoder models with an LM head return `Seq2SeqLMOutput`, which is a
+            # sibling of `Seq2SeqModelOutput` rather than a subclass, so they fall through to
+            # the `else` below; and the base models that do return `Seq2SeqModelOutput` have no
+            # `.generate`, which `add_soft_prompt` requires. Fix the dispatch before this.
             if result.past_key_values is not None:
                 result.past_key_values = tuple(  # type: ignore[assignment]
                     map(unpatch_kv_tensor, result.past_key_values)
