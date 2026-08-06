@@ -42,7 +42,10 @@ jobs:
       - name: Check the tag matches tango/version.py
         run: |
           set -e
-          VERSION="v$(python -c 'from tango.version import VERSION; print(VERSION)')"
+          # `runpy` executes version.py on its own. Importing `tango.version` would run
+          # `tango/__init__.py` and pull in the whole dependency tree, which this job doesn't
+          # install because it only needs the version string.
+          VERSION="v$(python -c "import runpy; print(runpy.run_path('tango/version.py')['VERSION'])")"
           if [ "$VERSION" != "$TAG" ]; then
             echo "::error::Tag $TAG does not match tango/version.py ($VERSION)."
             exit 1

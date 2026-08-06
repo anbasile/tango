@@ -2,7 +2,9 @@
 
 set -e
 
-TAG=$(python -c 'from tango.version import VERSION; print("v" + VERSION)')
+# Read version.py directly rather than importing `tango`, so this works without the package's
+# dependencies installed.
+TAG="v$(python -c "import runpy; print(runpy.run_path('tango/version.py')['VERSION'])")"
 
 read -p "Creating new release for $TAG. Do you want to continue? [Y/n] " prompt
 
