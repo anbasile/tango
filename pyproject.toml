@@ -86,8 +86,8 @@ all = [
 tango = "tango.__main__:main"
 
 [project.urls]
-homepage = "https://github.com/allenai/tango"
-repository = "https://github.com/allenai/tango"
+homepage = "https://github.com/anbasile/tango"
+repository = "https://github.com/anbasile/tango"
 
 [tool.setuptools.packages.find]
 exclude = [

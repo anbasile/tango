@@ -26,7 +26,7 @@ def main():
     lines.insert(insert_index, "\n")
     lines.insert(
         insert_index + 1,
-        f"## [v{VERSION}](https://github.com/allenai/tango/releases/tag/v{VERSION}) - "
+        f"## [v{VERSION}](https://github.com/anbasile/tango/releases/tag/v{VERSION}) - "
         f"{datetime.now().strftime('%Y-%m-%d')}\n",
     )
 

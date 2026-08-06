@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  # Reuse the build workflow so released artifacts come out of the same steps CI already ran.
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ github.ref }}
+
+  publish:
+    name: Publish to GitHub Releases
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      # Required to create the release and upload assets.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install requirements for the release notes
+        run: |
+          pip install --upgrade pip packaging
+
+      - name: Determine the tag
+        run: |
+          echo "TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+
+      # A tag that disagrees with tango/version.py produces a release whose assets are named
+      # after a different version, which is confusing and hard to undo. Fail early instead.
+      - name: Check the tag matches tango/version.py
+        run: |
+          set -e
+          VERSION="v$(python -c 'from tango.version import VERSION; print(VERSION)')"
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match tango/version.py ($VERSION)."
+            exit 1
+          fi
+          echo "Tag $TAG matches tango/version.py."
+
+      - name: Download the built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist
+
+      - name: Generate release notes
+        run: |
+          python scripts/release_notes.py > release-notes.md
+          echo "----- release notes -----"
+          cat release-notes.md
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          PRERELEASE=""
+          case "$TAG" in
+            *rc*|*a*|*b*) PRERELEASE="--prerelease" ;;
+          esac
+          gh release create "$TAG" dist/* \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            $PRERELEASE
+
+      - name: Summarise
+        run: |
+          {
+            echo "### Released \`$TAG\`"
+            echo
+            echo "Install the wheel with:"
+            echo
+            echo '```bash'
+            echo "pip install https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/$(cd dist && ls *.whl)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

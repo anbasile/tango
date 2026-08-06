@@ -17,7 +17,8 @@ def test_step_info():
         assert step_info.environment.git is not None
         assert step_info.environment.git.commit is not None
         assert step_info.environment.git.remote is not None
-        assert "allenai/tango" in step_info.environment.git.remote
+        # Don't pin the owner: this repo is a fork, and contributors run the suite from theirs.
+        assert "tango" in step_info.environment.git.remote
 
     # Check pip requirements.
     assert step_info.environment.packages is not None

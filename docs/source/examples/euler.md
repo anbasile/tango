@@ -3,7 +3,7 @@
 
 ## Running the experiment
 
-If you haven't already, clone the [tango repository](https://github.com/allenai/tango) and then
+If you haven't already, clone the [tango repository](https://github.com/anbasile/tango) and then
 change directories into `examples/euler`.
 
 You can then run the experiment with:

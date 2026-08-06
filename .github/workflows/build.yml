@@ -1,0 +1,75 @@
+name: Build
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  # Lets the release workflow reuse this job, so the artifacts that get published are built
+  # by exactly the same steps that every pull request exercises.
+  workflow_call:
+    inputs:
+      ref:
+        description: The ref to build.
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          # `tango.version` is read at build time and the release notes walk the tag history.
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          pip install --upgrade pip build twine
+
+      - name: Build sdist and wheel
+        run: |
+          python -m build
+
+      - name: Check distribution metadata
+        run: |
+          twine check --strict dist/*
+
+      # Installing the built wheel into a throwaway environment catches packaging mistakes that
+      # an editable install hides, such as a missing package or missing package data.
+      - name: Smoke-test the wheel in a clean environment
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/pip install --upgrade pip
+          /tmp/smoke/bin/pip install dist/*.whl
+          cd /tmp  # Import from the installed package, not the source tree.
+          /tmp/smoke/bin/tango --version
+          /tmp/smoke/bin/tango info
+          /tmp/smoke/bin/python -c "import tango; print('import ok:', tango.version.VERSION)"
+
+      - name: Show what was built
+        run: |
+          ls -lh dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

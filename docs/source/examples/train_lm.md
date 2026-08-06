@@ -6,7 +6,7 @@
 ```
 
 ```{tip}
-You can find the full code for this example on [GitHub](https://github.com/allenai/tango/tree/main/examples/train_lm).
+You can find the full code for this example on [GitHub](https://github.com/anbasile/tango/tree/main/examples/train_lm).
 ```
 
 ## Components

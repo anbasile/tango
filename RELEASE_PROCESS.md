@@ -1,21 +1,41 @@
-# GitHub Release Process
+# Release Process
+
+Releases are published to [GitHub Releases](https://github.com/anbasile/tango/releases) with the
+wheel and sdist attached. This fork is not published to PyPI or conda-forge.
 
 ## Steps
 
-1. Update the version in `tango/version.py`.
+1. Make sure the changes you want to release are described under "Unreleased" in `CHANGELOG.md`.
 
-2. Run the release script:
+2. Update the version in `tango/version.py`.
+
+3. Run the release script:
 
     ```bash
     ./scripts/release.sh
     ```
 
-    This will automatically update the CHANGELOG, commit the changes to the CHANGELOG and `version.py` (and any other files you might have changed),
-    and then create a new tag in git which will trigger a workflow on GitHub Actions that handles the rest.
+    This updates the CHANGELOG and `CITATION.cff`, commits, and pushes a `vX.Y.Z` tag. Pushing the
+    tag triggers `.github/workflows/release.yml`, which:
+
+    - rebuilds the sdist and wheel through the same reusable `build.yml` workflow that runs on
+      every pull request,
+    - checks the tag agrees with `tango/version.py`, and fails the release if it doesn't,
+    - generates release notes from the matching `CHANGELOG.md` section,
+    - creates the GitHub release with `dist/*` attached.
+
+    Tags containing `rc`, `a` or `b` are published as pre-releases.
+
+## Installing a release
+
+```bash
+pip install https://github.com/anbasile/tango/releases/download/v2.0.0/ai2_tango-2.0.0-py3-none-any.whl
+```
 
 ## Fixing a failed release
 
-If for some reason the GitHub Actions release workflow failed with an error that needs to be fixed, you'll have to delete both the tag and corresponding release from GitHub. After you've pushed a fix, delete the tag from your local clone with
+Delete both the tag and the corresponding release from GitHub, then push a fix. Remove the tag from
+your local clone with:
 
 ```bash
 git tag -l | xargs git tag -d && git fetch -t

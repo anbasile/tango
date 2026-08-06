@@ -38,8 +38,8 @@ api/utilities
 
 CONTRIBUTING
 CHANGELOG
-License <https://raw.githubusercontent.com/allenai/tango/main/LICENSE>
-GitHub Repository <https://github.com/allenai/tango>
+License <https://raw.githubusercontent.com/anbasile/tango/main/LICENSE>
+GitHub Repository <https://github.com/anbasile/tango>
 ```
 
 To learn about Tango in 5 minutes, head over to the [First Steps section](first_steps).

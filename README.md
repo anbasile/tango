@@ -1,6 +1,6 @@
 <div align="center">
 <br>
-<img src="https://raw.githubusercontent.com/allenai/tango/main/docs/source/_static/tango_final_horizontal.png" width="600"/>
+<img src="https://raw.githubusercontent.com/anbasile/tango/main/docs/source/_static/tango_final_horizontal.png" width="600"/>
 <br>
 <br>
 <p>
@@ -9,27 +9,35 @@ AI2 Tango replaces messy directories and spreadsheets full of file versions by o
 <!-- end tagline -->
 </p>
 <hr/>
-<a href="https://github.com/allenai/tango/actions">
-    <img alt="CI" src="https://github.com/allenai/tango/workflows/CI/badge.svg?event=push&branch=main">
+<a href="https://github.com/anbasile/tango/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/anbasile/tango/actions/workflows/ci.yml/badge.svg?branch=main">
 </a>
-<a href="https://pypi.org/project/ai2-tango/">
-    <img alt="PyPI" src="https://img.shields.io/pypi/v/ai2-tango">
+<a href="https://github.com/anbasile/tango/releases">
+    <img alt="Release" src="https://img.shields.io/github/v/release/anbasile/tango?display_name=tag&sort=semver">
 </a>
-<a href="https://ai2-tango.readthedocs.io/en/latest/?badge=latest">
-    <img src="https://readthedocs.org/projects/ai2-tango/badge/?version=latest" alt="Documentation Status" />
-</a>
-<a href="https://github.com/allenai/tango/blob/main/LICENSE">
-    <img alt="License" src="https://img.shields.io/github/license/allenai/tango.svg?color=blue&cachedrop">
+<a href="https://github.com/anbasile/tango/blob/main/LICENSE">
+    <img alt="License" src="https://img.shields.io/github/license/anbasile/tango.svg?color=blue&cachedrop">
 </a>
 <br/>
 </div>
 
+> ### About this fork
+>
+> This is an unofficial fork of [allenai/tango](https://github.com/allenai/tango), which has been
+> unmaintained since May 2024 (last release v1.3.2, October 2023). It updates Tango to run on a
+> current Python and ML stack — Python 3.10–3.13, PyTorch 2.x, transformers 5.x, datasets 5.x —
+> and drops the integrations whose upstreams are gone. See [the CHANGELOG](CHANGELOG.md) for the
+> full list of changes.
+>
+> It is **not** published to PyPI or conda-forge, and it is not affiliated with AI2. The original
+> `ai2-tango` package on PyPI is the upstream project, not this one.
+
 ## Quick links
 
-- [Documentation](https://ai2-tango.readthedocs.io/)
-- [PyPI Package](https://pypi.org/project/ai2-tango/)
-- [Contributing](https://github.com/allenai/tango/blob/main/CONTRIBUTING.md)
-- [License](https://github.com/allenai/tango/blob/main/LICENSE)
+- [Releases](https://github.com/anbasile/tango/releases)
+- [CHANGELOG](CHANGELOG.md)
+- [Contributing](.github/CONTRIBUTING.md)
+- [License](LICENSE)
 
 ## In this README
 
@@ -107,58 +115,31 @@ For a more detailed introduction check out the [First Steps](https://ai2-tango.r
 
 <!-- start install -->
 
-**ai2-tango** requires Python 3.8 or later.
+This fork requires Python 3.10 or later.
 
-### Installing with `pip`
+### Installing a release
 
-**ai2-tango** is available [on PyPI](https://pypi.org/project/ai2-tango/). Just run
-
-```bash
-pip install ai2-tango
-```
-
-To install with a specific integration, such as `torch` for example, run
+This fork is not on PyPI. Wheels are attached to
+[each GitHub release](https://github.com/anbasile/tango/releases), so install one directly:
 
 ```bash
-pip install 'ai2-tango[torch]'
+pip install https://github.com/anbasile/tango/releases/download/v2.0.0/ai2_tango-2.0.0-py3-none-any.whl
 ```
 
-To install with all integrations, run
+Extras work as usual:
 
 ```bash
-pip install 'ai2-tango[all]'
+pip install 'ai2_tango[torch] @ https://github.com/anbasile/tango/releases/download/v2.0.0/ai2_tango-2.0.0-py3-none-any.whl'
 ```
 
-### Installing with `conda`
-
-**ai2-tango** is available on conda-forge. You can install just the base package with
-
-```bash
-conda install tango -c conda-forge
-```
-
-You can pick and choose from the integrations with one of these:
-
-```bash
-conda install tango-datasets -c conda-forge
-conda install tango-torch -c conda-forge
-```
-
-You can also install everything:
-
-```bash
-conda install tango-all -c conda-forge
-```
-
-Even though **ai2-tango** itself is quite small, installing everything will pull in a lot of dependencies.
-Don't be surprised if this takes a while!
+The available extras are `torch`, `transformers`, `datasets`, `examples` and `all`.
 
 ### Installing from source
 
-To install **ai2-tango** from source, first clone [the repository](https://github.com/allenai/tango):
+To install **ai2-tango** from source, first clone [the repository](https://github.com/anbasile/tango):
 
 ```bash
-git clone https://github.com/allenai/tango.git
+git clone https://github.com/anbasile/tango.git
 cd tango
 ```
 
@@ -192,27 +173,18 @@ to check your installation.
 
 ### Docker image
 
-You can build a Docker image suitable for tango projects by using [the official Dockerfile](https://github.com/allenai/tango/blob/main/Dockerfile) as a starting point for your own Dockerfile, or you can simply use one of our [prebuilt images](https://github.com/allenai/tango/pkgs/container/tango) as a base image in your Dockerfile. For example:
+No prebuilt images are published for this fork, but [the Dockerfile](Dockerfile) builds one:
 
-```Dockerfile
-# Start from a prebuilt tango base image.
-# You can choose the right tag from the available options here:
-# https://github.com/allenai/tango/pkgs/container/tango/versions
-FROM ghcr.io/allenai/tango:cuda11.3
-
-# Install your project's additional requirements.
-COPY requirements.txt .
-RUN /opt/conda/bin/pip install --no-cache-dir -r requirements.txt
-
-# Install source code.
-# This instruction copies EVERYTHING in the current directory (build context),
-# which may not be what you want. Consider using a ".dockerignore" file to
-# exclude files and directories that you don't want on the image.
-COPY . .
+```bash
+docker build -t tango .
+docker run --rm tango info
 ```
 
-Make sure to choose the right base image for your use case depending on the version of tango you're using and the CUDA version that your host machine supports.
-You can see a list of all available image tags [on GitHub](https://github.com/allenai/tango/pkgs/container/tango/versions).
+It defaults to a CUDA-enabled `pytorch/pytorch` base, which you can override:
+
+```bash
+docker build --build-arg BASE_IMAGE=python:3.12-slim -t tango .
+```
 
 <!-- end install -->
 
@@ -254,9 +226,13 @@ that the step has been updated.
 
 <!-- start team -->
 
-**ai2-tango** is developed and maintained by the AllenNLP team, backed by [the Allen Institute for Artificial Intelligence (AI2)](https://allenai.org/).
-AI2 is a non-profit institute with the mission to contribute to humanity through high-impact AI research and engineering.
-To learn more about who specifically contributed to this codebase, see [our contributors](https://github.com/allenai/tango/graphs/contributors) page.
+**ai2-tango** was created and maintained by the AllenNLP team, backed by
+[the Allen Institute for Artificial Intelligence (AI2)](https://allenai.org/), and the overwhelming
+majority of this codebase is their work — see
+[the upstream contributors](https://github.com/allenai/tango/graphs/contributors).
+
+This fork is maintained separately by [@anbasile](https://github.com/anbasile) and is not
+affiliated with or endorsed by AI2.
 
 <!-- end team -->
 
@@ -265,6 +241,6 @@ To learn more about who specifically contributed to this codebase, see [our cont
 <!-- start license -->
 
 **ai2-tango** is licensed under [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0).
-A full copy of the license can be found [on GitHub](https://github.com/allenai/tango/blob/main/LICENSE).
+A full copy of the license can be found [on GitHub](https://github.com/anbasile/tango/blob/main/LICENSE).
 
 <!-- end license -->
