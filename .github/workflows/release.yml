@@ -50,7 +50,7 @@ jobs:
           echo "Tag $TAG matches tango/version.py."
 
       - name: Download the built distributions
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: distributions
           path: dist
