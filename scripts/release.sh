@@ -10,10 +10,12 @@ if [[ $prompt == "y" || $prompt == "Y" || $prompt == "yes" || $prompt == "Yes" ]
     python scripts/prepare_changelog.py
     python scripts/prepare_citation_cff.py
     git add -A
-    git commit -m "Prepare for release $TAG" || true && git push
+    git commit -m "Prepare for release $TAG" || true && git push origin HEAD
     echo "Creating new git tag $TAG"
     git tag "$TAG" -m "$TAG"
-    git push --tags
+    # Push only this tag. `git push --tags` would push every local tag, and this fork's clone
+    # still carries allenai/tango's 46 of them — each would fire the release workflow.
+    git push origin "$TAG"
 else
     echo "Cancelled"
     exit 1
