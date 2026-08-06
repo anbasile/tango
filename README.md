@@ -26,7 +26,7 @@ AI2 Tango replaces messy directories and spreadsheets full of file versions by o
 > This is an unofficial fork of [allenai/tango](https://github.com/allenai/tango), which has been
 > unmaintained since May 2024 (last release v1.3.2, October 2023). It updates Tango to run on a
 > current Python and ML stack — Python 3.10–3.13, PyTorch 2.x, transformers 5.x, datasets 5.x —
-> and drops the integrations whose upstreams are gone. See [the CHANGELOG](CHANGELOG.md) for the
+> and drops the integrations whose upstreams are gone. See [the CHANGELOG](https://github.com/anbasile/tango/blob/main/CHANGELOG.md) for the
 > full list of changes.
 >
 > It is **not** published to PyPI or conda-forge, and it is not affiliated with AI2. The original
@@ -35,9 +35,9 @@ AI2 Tango replaces messy directories and spreadsheets full of file versions by o
 ## Quick links
 
 - [Releases](https://github.com/anbasile/tango/releases)
-- [CHANGELOG](CHANGELOG.md)
-- [Contributing](.github/CONTRIBUTING.md)
-- [License](LICENSE)
+- [CHANGELOG](https://github.com/anbasile/tango/blob/main/CHANGELOG.md)
+- [Contributing](https://github.com/anbasile/tango/blob/main/.github/CONTRIBUTING.md)
+- [License](https://github.com/anbasile/tango/blob/main/LICENSE)
 
 ## In this README
 
@@ -173,7 +173,7 @@ to check your installation.
 
 ### Docker image
 
-No prebuilt images are published for this fork, but [the Dockerfile](Dockerfile) builds one:
+No prebuilt images are published for this fork, but [the Dockerfile](https://github.com/anbasile/tango/blob/main/Dockerfile) builds one:
 
 ```bash
 docker build -t tango .

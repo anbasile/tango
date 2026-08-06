@@ -1,11 +1,27 @@
+# Daily, ungrouped updates are what left the upstream repo with 14 stale bot PRs. Weekly and
+# grouped means one PR per ecosystem per week, which is reviewable.
 version: 2
 updates:
-- package-ecosystem: pip
-  directory: "/"
-  schedule:
-    interval: "daily"
-  open-pull-requests-limit: 10
-- package-ecosystem: "github-actions"
-  directory: "/"
-  schedule:
-    interval: "daily"
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+        # Majors are the ones that actually need thought, so keep them out of the bulk PR.
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
