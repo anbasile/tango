@@ -222,7 +222,7 @@ class JsonFormat(Format[T], Generic[T]):
         except ImportError:
             pass
 
-        if dataclasses.is_dataclass(unencodable):
+        if dataclasses.is_dataclass(unencodable) and not isinstance(unencodable, type):
             result = dataclasses.asdict(unencodable)
             module = type(unencodable).__module__
             qualname = type(unencodable).__qualname__

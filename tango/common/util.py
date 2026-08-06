@@ -313,7 +313,7 @@ def jsonify(o: Any) -> Any:
         return OrderedDict((k, jsonify(v)) for k, v in sorted(o.items(), key=lambda x: x[0]))
     elif isinstance(o, datetime):
         return o.strftime("%Y-%m-%dT%H:%M:%S")
-    elif is_dataclass(o):
+    elif is_dataclass(o) and not isinstance(o, type):
         return jsonify(asdict(o))
     elif isinstance(o, Path):
         return str(o)

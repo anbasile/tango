@@ -69,7 +69,7 @@ file or update fields in it.
 """
 import os
 from pathlib import Path
-from typing import Dict, List, NamedTuple, Optional, Sequence, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Union
 
 import click
 from click_help_colors import HelpColorsCommand, HelpColorsGroup
@@ -95,14 +95,14 @@ from tango.step_graph import StepGraph
 from tango.version import VERSION
 from tango.workspace import Workspace
 
-_CLICK_GROUP_DEFAULTS = {
+_CLICK_GROUP_DEFAULTS: Dict[str, Any] = {
     "cls": HelpColorsGroup,
     "help_options_color": "green",
     "help_headers_color": "yellow",
     "context_settings": {"max_content_width": 115},
 }
 
-_CLICK_COMMAND_DEFAULTS = {
+_CLICK_COMMAND_DEFAULTS: Dict[str, Any] = {
     "cls": HelpColorsCommand,
     "help_options_color": "green",
     "help_headers_color": "yellow",

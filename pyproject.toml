@@ -149,7 +149,9 @@ select = ["E"]
 [tool.mypy]
 ignore_missing_imports = true
 no_site_packages = false
-allow_redefinition = true
+# mypy 2.0 repurposed `allow_redefinition`; the semantics this codebase relies on
+# (unconditional redefinition with a new type in the same block) are now `_old`.
+allow_redefinition_old = true
 check_untyped_defs = true
 
 [[tool.mypy.overrides]]
@@ -160,7 +162,7 @@ disable_error_code = [
   "no-redef",
   "dict-item"
 ]
-allow_redefinition = true
+allow_redefinition_old = true
 
 [tool.pytest.ini_options]
 testpaths = "tests/"

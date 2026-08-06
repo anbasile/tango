@@ -76,7 +76,7 @@ class Lazy(Generic[T], CustomDetHash):
 
             return constructor_to_use
         else:
-            return self._constructor
+            return self._constructor  # type: ignore[return-value]
 
     def construct(self, **kwargs) -> T:
         """
@@ -122,7 +122,7 @@ class Lazy(Generic[T], CustomDetHash):
                     )
                     subclass_or_factory_func, _ = as_registrable.resolve_class_name(choice)
                     if inspect.isclass(subclass_or_factory_func):
-                        class_to_construct = subclass_or_factory_func
+                        class_to_construct = subclass_or_factory_func  # type: ignore[assignment]
                     else:
                         # We have a function that returns an instance of the class.
                         factory_func = cast(Callable[..., T], subclass_or_factory_func)

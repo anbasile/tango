@@ -30,7 +30,8 @@ def get_pip_packages() -> Optional[List[Tuple[str, str]]]:
         for dist in distributions():
             # A malformed distribution can be missing its metadata entirely, and duplicate
             # entries show up when the same package is installed in several path entries.
-            name = (dist.metadata or {}).get("Name")
+            metadata = dist.metadata
+            name = None if metadata is None else metadata["Name"]
             if name:
                 packages.append((name.lower(), dist.version))
         return sorted(set(packages))

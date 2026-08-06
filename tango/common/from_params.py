@@ -539,7 +539,7 @@ def construct_arg(
     # List[TokenIndexer], Tuple[TokenIndexer, Tokenizer], and Set[TokenIndexer],
     # which it creates by instantiating each value from_params and returning the resulting structure.
     elif origin in {collections.abc.Mapping, Mapping, Dict, dict} and len(args) == 2:
-        value_cls = annotation.__args__[-1]
+        value_cls = args[-1]
         value_dict = {}
         if not isinstance(popped_params, Mapping):
             raise TypeError(
@@ -561,11 +561,11 @@ def construct_arg(
     elif origin in (Tuple, tuple):
         value_list = []
 
-        value_types = list(annotation.__args__)
+        value_types = list(args)
         if value_types[-1] == Ellipsis:
             # Variable length tuples, e.g. 'Tuple[int, ...]', we set value_types to '[int] * len(popped_params)'.
             value_types = value_types[:-1] + [value_types[-2]] * (
-                len(popped_params) - len(annotation.__args__) + 1
+                len(popped_params) - len(args) + 1
             )
 
         for i, (value_cls, value_params) in enumerate(zip(value_types, popped_params)):
@@ -581,7 +581,7 @@ def construct_arg(
         return tuple(value_list)
 
     elif origin in (Set, set) and len(args) == 1:
-        value_cls = annotation.__args__[0]
+        value_cls = args[0]
 
         value_set = set()
 
@@ -635,7 +635,7 @@ def construct_arg(
     # it the same as List. This condition needs to be at the end, so we don't catch other kinds
     # of Iterables with this branch.
     elif origin in {collections.abc.Iterable, Iterable, List, list} and len(args) == 1:
-        value_cls = annotation.__args__[0]
+        value_cls = args[0]
 
         value_list = []
 
@@ -770,7 +770,7 @@ class FromParams(DetHashWithVersion):
                         constructor_to_call = constructor_to_inspect
                     else:
                         constructor_to_inspect = subclass.__init__
-                        constructor_to_call = subclass
+                        constructor_to_call = subclass  # type: ignore[assignment]
                 else:
                     # We have a function that returns an instance of the class.
                     factory_func = cast(Callable[..., T], subclass_or_factory_func)

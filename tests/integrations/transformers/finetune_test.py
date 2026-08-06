@@ -15,7 +15,10 @@ class TestTokenizeText2TextData(TangoTestCase):
         step = TokenizeText2TextData()
 
         tokenized = step.run(
-            data=data_dict, tokenizer=tokenizer, source_field="field1", target_field="field2"
+            data=data_dict,
+            tokenizer=tokenizer,  # type: ignore[arg-type]
+            source_field="field1",
+            target_field="field2",
         )
         assert isinstance(tokenized, DatasetDict)
         assert len(tokenized["train"]) == 2
@@ -33,7 +36,7 @@ class TestTokenizeText2TextData(TangoTestCase):
 
         tokenized = step.run(
             data=data_dict,
-            tokenizer=tokenizer,
+            tokenizer=tokenizer,  # type: ignore[arg-type]
             source_field="field1",
             target_field="field2",
             concat_source_target=True,

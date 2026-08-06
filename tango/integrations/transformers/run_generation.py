@@ -293,10 +293,11 @@ class RunGeneration(Step[Iterable[List[str]]]):
             Returns an iterator of lists of string. Each list contains the predictions for one prompt.
         """
         if isinstance(model, str):
+            model_name = model
             try:
-                model = cast(Model, AutoModelForSeq2SeqLM.from_pretrained(model))
+                model = cast(Model, AutoModelForSeq2SeqLM.from_pretrained(model_name))
             except ValueError:
-                model = cast(Model, AutoModelForCausalLM.from_pretrained(model))
+                model = cast(Model, AutoModelForCausalLM.from_pretrained(model_name))
 
         tokenizer = tokenizer or AutoTokenizer.from_pretrained(model.name_or_path)
 
@@ -407,10 +408,11 @@ class RunGenerationDataset(Step[DatasetDict]):
         """
 
         if isinstance(model, str):
+            model_name = model
             try:
-                model = cast(Model, AutoModelForSeq2SeqLM.from_pretrained(model))
+                model = cast(Model, AutoModelForSeq2SeqLM.from_pretrained(model_name))
             except ValueError:
-                model = cast(Model, AutoModelForCausalLM.from_pretrained(model))
+                model = cast(Model, AutoModelForCausalLM.from_pretrained(model_name))
 
         tokenizer = tokenizer or AutoTokenizer.from_pretrained(model.name_or_path)
 

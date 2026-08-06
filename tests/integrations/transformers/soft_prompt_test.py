@@ -1,10 +1,14 @@
+from typing import Any
+
 import transformers
 
 from tango.integrations.transformers import add_soft_prompt
 
 
 def test_soft_prompt():
-    model = transformers.AutoModelForSeq2SeqLM.from_pretrained("t5-small")
+    # `Any`, because transformers' `from_pretrained` returns internal mixin types that don't
+    # match either the nominal `Model` this helper takes or the `generate()` self type.
+    model: Any = transformers.AutoModelForSeq2SeqLM.from_pretrained("t5-small")
     tokenizer = transformers.AutoTokenizer.from_pretrained("t5-small")
     prompt = "translate English to German: That is good."
     model.eval()
@@ -26,7 +30,7 @@ def test_soft_prompt():
 def test_soft_prompt_twice():
     tokenizer = transformers.AutoTokenizer.from_pretrained("gpt2")
 
-    model = transformers.AutoModelForCausalLM.from_pretrained("gpt2")
+    model: Any = transformers.AutoModelForCausalLM.from_pretrained("gpt2")
     add_soft_prompt(model, prompt_length=2)
     model.eval()
     generated = model.generate(tokenizer.encode("It was the best of times.", return_tensors="pt"))

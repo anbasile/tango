@@ -274,7 +274,7 @@ def modify_with_ia3(
                     ), "This code only supports Conv1D and nn.Linear"
                     adaptor_class = Conv1DWithIA3 if isinstance(layer, Conv1D) else LinearWithIA3
                     new_module = adaptor_class(
-                        layer,
+                        layer,  # type: ignore[arg-type]
                         config.ia3_param_names,
                         unfuse_size=transformer.config.hidden_size  # type: ignore
                         if config.fused_qkv_layers and re.fullmatch(config.fused_qkv_layers, c_name)
