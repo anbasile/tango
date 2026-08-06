@@ -2,7 +2,7 @@ import functools
 import inspect
 import logging
 import random
-from typing import Any, Dict, Optional, TypeVar, cast
+from typing import Any, Callable, Dict, Optional, TypeVar, cast
 
 import torch
 from torch import nn
@@ -95,7 +95,7 @@ def add_soft_prompt(
         initialize_from_top_embeddings = original_embedding.num_embeddings
     indices = torch.tensor(r.sample(range(initialize_from_top_embeddings), prompt_length))
     with torch.no_grad():
-        prompt_embedding.copy_(original_embedding(indices).unsqueeze(0))  # type: ignore[operator]
+        prompt_embedding.copy_(original_embedding(indices).unsqueeze(0))
 
     if only_prompt_is_trainable:
         for param in model.parameters():
@@ -203,19 +203,24 @@ def add_soft_prompt(
         elif isinstance(result, Seq2SeqModelOutput):
             if result.last_hidden_state is not None:
                 result.last_hidden_state = unpatch_tensor(result.last_hidden_state)
-            # The `Seq2SeqModelOutput` stubs don't carry the attributes this branch reads and
-            # writes, and `past_key_values` is now typed as a `Cache` rather than a tuple.
+            # NOTE: as of transformers v5 `past_key_values` is a `Cache` object, not a tuple,
+            # so writing a tuple back is wrong. Porting this properly needs the Cache API; the
+            # branch is unreachable for LM-head models today (see below), so it is left as-is.
             if result.past_key_values is not None:
                 result.past_key_values = tuple(  # type: ignore[assignment]
                     map(unpatch_kv_tensor, result.past_key_values)
                 )
+            # The prompt is prepended to the *encoder* input, so it is the encoder's hidden
+            # states and attentions that carry it. This used to read and write `hidden_states`
+            # and `attentions`, which `Seq2SeqModelOutput` does not have at all — reaching this
+            # branch raised `AttributeError`.
             if result.encoder_hidden_states is not None:
-                result.hidden_states = tuple(  # type: ignore[attr-defined]
-                    map(unpatch_tensor, result.hidden_states)  # type: ignore[attr-defined]
+                result.encoder_hidden_states = tuple(
+                    map(unpatch_tensor, result.encoder_hidden_states)
                 )
             if result.encoder_attentions is not None:
-                result.attentions = tuple(  # type: ignore[attr-defined]
-                    map(unpatch_attention_tensor, result.attentions)  # type: ignore[attr-defined]
+                result.encoder_attentions = tuple(
+                    map(unpatch_attention_tensor, result.encoder_attentions)
                 )
             if result.cross_attentions is not None:
                 result.cross_attentions = tuple(
@@ -235,7 +240,7 @@ def add_soft_prompt(
     # calls the encoder separately, and then passes the results into `forward()`. So in that case, we have to patch
     # this too.
     if model.config.is_encoder_decoder:
-        old_generate = model.generate
+        old_generate = cast(Callable[..., Any], model.generate)
 
         def new_generate(*args, **kwargs):
             args = (model,) + args
@@ -245,7 +250,7 @@ def add_soft_prompt(
             if "encoder_outputs" in ba.arguments:
                 # For encoder/decoder models, this runs only on the encoder. If we already have encoder outputs,
                 # we don't have to do anything.
-                return old_generate(*ba.args, **ba.kwargs)  # type: ignore[operator]
+                return old_generate(*ba.args, **ba.kwargs)
 
             inputs_embeds: Optional[torch.Tensor] = None
             inputs = ba.arguments.pop("inputs", None)
@@ -261,11 +266,9 @@ def add_soft_prompt(
             assert callable(model.get_encoder)
             encoder = model.get_encoder()
             kwargs = ba.kwargs
-            kwargs["encoder_outputs"] = encoder(  # type: ignore[operator]
-                inputs_embeds=inputs_embeds, return_dict=True
-            )
+            kwargs["encoder_outputs"] = encoder(inputs_embeds=inputs_embeds, return_dict=True)
 
-            return old_generate(*ba.args, **kwargs)  # type: ignore[operator]
+            return old_generate(*ba.args, **kwargs)
 
         model.generate = new_generate  # type: ignore
 

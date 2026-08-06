@@ -770,7 +770,7 @@ class FromParams(DetHashWithVersion):
                         constructor_to_call = constructor_to_inspect
                     else:
                         constructor_to_inspect = subclass.__init__
-                        constructor_to_call = subclass  # type: ignore[assignment]
+                        constructor_to_call = cast(Callable[..., T], subclass)
                 else:
                     # We have a function that returns an instance of the class.
                     factory_func = cast(Callable[..., T], subclass_or_factory_func)

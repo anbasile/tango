@@ -71,6 +71,10 @@ of this release is removing dead surface and unpinning.
   `generate()` passes an *empty* cache on the first step rather than `None`, so the "already
   running" guard short-circuited and the prompt was silently never applied; and `logits_to_keep`
   means the LM head may return only the last position, which the un-patching would trim to nothing.
+- `add_soft_prompt` no longer raises `AttributeError` for encoder-decoder models whose forward
+  pass returns a `Seq2SeqModelOutput` with hidden states or attentions requested. The un-patching
+  branch checked `encoder_hidden_states` / `encoder_attentions` but then read and wrote
+  `hidden_states` / `attentions`, which that class does not have.
 - The `train_lm` and `finetune_resnet` examples point at dataset repos that still resolve.
   Bare ids (`wikitext`, `snli`) need a namespace now, and `nateraw/auto-cats-and-dogs` was a
   loading-script dataset, replaced by `microsoft/cats_vs_dogs`.

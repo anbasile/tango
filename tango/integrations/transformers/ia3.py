@@ -269,20 +269,27 @@ def modify_with_ia3(
             )
             for c_name, layer in dict(module.named_children()).items():
                 if re.fullmatch(layers_to_change, c_name):
-                    assert isinstance(layer, Conv1D) or isinstance(
-                        layer, nn.Linear
-                    ), "This code only supports Conv1D and nn.Linear"
-                    adaptor_class = Conv1DWithIA3 if isinstance(layer, Conv1D) else LinearWithIA3
-                    new_module = adaptor_class(
-                        layer,  # type: ignore[arg-type]
-                        config.ia3_param_names,
-                        unfuse_size=(
-                            transformer.config.hidden_size  # type: ignore
-                            if config.fused_qkv_layers
-                            and re.fullmatch(config.fused_qkv_layers, c_name)
-                            else None
-                        ),
+                    unfuse_size = (
+                        transformer.config.hidden_size  # type: ignore
+                        if config.fused_qkv_layers and re.fullmatch(config.fused_qkv_layers, c_name)
+                        else None
                     )
+                    # Branch on the layer type rather than picking the adaptor class first, so
+                    # the two constructors each see a properly narrowed argument.
+                    new_module: WithIA3
+                    if isinstance(layer, Conv1D):
+                        new_module = Conv1DWithIA3(
+                            layer, config.ia3_param_names, unfuse_size=unfuse_size
+                        )
+                    elif isinstance(layer, nn.Linear):
+                        new_module = LinearWithIA3(
+                            layer, config.ia3_param_names, unfuse_size=unfuse_size
+                        )
+                    else:
+                        raise TypeError(
+                            f"This code only supports Conv1D and nn.Linear, "
+                            f"but {m_name}.{c_name} is a {type(layer).__name__}"
+                        )
                     setattr(module, c_name, new_module)
 
     if only_ia3_requires_grad:

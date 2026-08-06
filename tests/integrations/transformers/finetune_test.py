@@ -4,6 +4,11 @@ from transformers import AutoTokenizer
 from tango.common.testing import TangoTestCase
 from tango.integrations.transformers import TokenizeText2TextData
 
+# `TokenizeText2TextData.run` declares `tokenizer: Tokenizer`, which is a Registrable marker used
+# to resolve tokenizers from a config. Its registered "auto" implementation is
+# `AutoTokenizer.from_pretrained`, whose return value is a `PreTrainedTokenizerBase` and
+# deliberately *not* a `Tokenizer` instance — so passing one directly needs an `arg-type` ignore.
+
 
 class TestTokenizeText2TextData(TangoTestCase):
     def test_tokenize_seq2seq(self):
