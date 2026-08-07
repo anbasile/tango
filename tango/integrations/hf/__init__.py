@@ -78,11 +78,13 @@ except ModuleNotFoundError:
     raise IntegrationMissingError("hf", dependencies={"huggingface_hub"})
 
 from .common import Flavor, HfBucketClient, HfStepLock, resolve_flavor
+from .endpoint import EndpointBatchStep
 from .executor import HfJobsExecutor
 from .step_cache import HfBucketStepCache
 from .workspace import HfBucketWorkspace
 
 __all__ = [
+    "EndpointBatchStep",
     "Flavor",
     "HfBucketClient",
     "HfBucketStepCache",

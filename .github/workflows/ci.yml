@@ -80,6 +80,14 @@ jobs:
             run: |
               pytest -v --color=yes --doctest-modules tango/integrations/transformers tests/integrations/transformers
 
+          # These tests stand the Hub up in memory (see tests/integrations/hf/fake_hub.py), so
+          # they need no token, no S3 credentials and no billing account.
+          - name: Hugging Face integration
+            extras: dev,hf
+            requires_torch: false
+            run: |
+              pytest -v --color=yes --doctest-modules tango/integrations/hf tests/integrations/hf
+
           - name: Example - train_lm
             extras: dev,all
             requires_torch: true

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- **New `hf` integration**, giving Tango remote execution and a shared step cache again, on
+  infrastructure anyone can reach. Install with `pip install ai2-tango[hf]`.
+- `HfBucketWorkspace` (`Workspace` under `"hf"`) stores step results and run metadata in a
+  [Hugging Face Storage Bucket](https://huggingface.co/docs/hub/storage-buckets). Its URL is the
+  Hub's own, so `tango run -w hf://buckets/<namespace>/<bucket>` just works. Buckets are mutable
+  and unversioned, which suits step info — a git-backed dataset repo would take a commit on every
+  state change.
+- `HfJobsExecutor` (`Executor` under `"hf"`) runs each step as a
+  [Hugging Face Job](https://huggingface.co/docs/hub/jobs), picking the cheapest hardware flavor
+  that satisfies the step's `step_resources`. Unlike the old Beaker executor it needs no git
+  remote, no `GITHUB_TOKEN` and no clean worktree: your project directory is synced to the Hub and
+  mounted into the container, so uncommitted work runs as-is. Set
+  `"step_resources": {"machine": "local"}` to keep cheap steps off the cluster, and `detach: true`
+  to hand the whole graph to a driver job and disconnect.
+- `EndpointBatchStep` (`Step` under `"hf::endpoint_batch"`) runs a batch of prompts through an
+  Inference Endpoint, creating and pausing it around the work.
+
+### Notes
+
+- Locking a step needs Hugging Face S3 gateway credentials (`HF_S3_ACCESS_KEY_ID` /
+  `HF_S3_SECRET_ACCESS_KEY`) in addition to your token. A conditional `PutObject` through
+  `s3.hf.co` is the only atomic claim the Hub exposes — the native bucket API is explicitly
+  non-transactional. The credentials are checked when the workspace is built, not when the first
+  step runs.
+- The lock records who holds it, so a dead holder is recoverable: a Job's liveness is settled by
+  the Jobs API, and a local process refreshes a heartbeat. The old Google Storage integration had
+  no such notion and left crashed runs holding a lock until somebody deleted it by hand.
+
 ## [v2.0.0](https://github.com/anbasile/tango/releases/tag/v2.0.0) - 2026-08-06
 
 Modernisation pass: Tango now runs on a current Python and ML stack. The core was already
