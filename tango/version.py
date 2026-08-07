@@ -1,5 +1,5 @@
 _MAJOR = "2"
-_MINOR = "0"
+_MINOR = "1"
 _PATCH = "0"
 # This is mainly for pre-releases which have the suffix "rc[0-9]+".
 _SUFFIX = ""
