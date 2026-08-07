@@ -78,8 +78,16 @@ transformers = [
 datasets = [
   "datasets>=2.14"
 ]
+hf = [
+  # 1.26 is the floor actually verified to carry every symbol this integration uses:
+  # the Jobs API, `Volume`, `sync_job_volume`, the whole bucket API, and Inference Endpoints.
+  "huggingface_hub>=1.26",
+  # Only for the step lock. The native bucket API has no conditional write, so the lock
+  # goes through the S3 gateway at s3.hf.co, which honours `If-None-Match` on PutObject.
+  "boto3",
+]
 all = [
-  "ai2-tango[examples,torch,transformers,datasets]"
+  "ai2-tango[examples,torch,transformers,datasets,hf]"
 ]
 
 [project.scripts]
