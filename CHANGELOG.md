@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v2.1.0](https://github.com/anbasile/tango/releases/tag/v2.1.0) - 2026-08-07
+
 ### Added
 
 - **New `hf` integration**, giving Tango remote execution and a shared step cache again, on
