@@ -35,6 +35,7 @@ CUDA build of PyTorch, e.g. ``pytorch/pytorch:2.6.0-cuda12.4-cudnn9-devel``.
 PROJECT_MOUNT = "/tango/project"
 CONFIG_MOUNT = "/tango/config"
 CONFIG_FILENAME = "config.jsonnet"
+SETTINGS_FILENAME = "tango.yml"
 
 #: Set in the driver job so the executor inside it fans out instead of detaching again.
 NO_DETACH_ENV_VAR = "TANGO_HF_NO_DETACH"
@@ -290,13 +291,45 @@ class HfJobsExecutor(Executor):
         )
         return self._mount(prefix, PROJECT_MOUNT)
 
-    def _upload_config(self, step_graph: StepGraph, run_name: Optional[str]) -> Any:
+    def _upload_config(
+        self, step_graph: StepGraph, run_name: Optional[str], with_settings: bool = False
+    ) -> Any:
         with tempfile.TemporaryDirectory(prefix="tango-hf-config-") as config_dir:
             local = Path(config_dir) / CONFIG_FILENAME
             step_graph.to_file(local, include_unique_id=True)
             prefix = f"{Constants.CONFIG_DIR}/{run_name or 'run'}"
             self._client.put_bytes(f"{prefix}/{CONFIG_FILENAME}", local.read_bytes())
+            if with_settings:
+                self._client.put_bytes(f"{prefix}/{SETTINGS_FILENAME}", self._settings_yaml())
         return self._mount(prefix, CONFIG_MOUNT)
+
+    def _settings_yaml(self) -> bytes:
+        """
+        A ``tango.yml`` for the driver job to run under.
+
+        The driver invokes a plain ``tango run``, which picks its executor out of the settings
+        file. Shipping one means detaching does not require the user's repo to contain a
+        ``tango.yml`` naming this executor — without it the driver would silently fall back to
+        the default executor and run every step inside the driver container.
+        """
+        import yaml
+
+        settings: Dict[str, Any] = {
+            "executor": {
+                "type": "hf",
+                "image": self.image,
+                "install_cmd": self.install_cmd,
+                "flavor": self.flavor,
+                "timeout": self.timeout,
+                "parallelism": self.max_thread_workers,
+                "poll_interval": self.poll_interval,
+                # The driver's own copy of the project, already installed by its entrypoint.
+                "project_dir": "/tmp/project",
+            }
+        }
+        if self.namespace is not None:
+            settings["executor"]["namespace"] = self.namespace
+        return yaml.safe_dump(settings).encode("utf-8")
 
     def _prepare_run_context(self, step_graph: StepGraph, run_name: Optional[str]) -> _RunContext:
         volumes = [self._sync_project(), self._upload_config(step_graph, run_name)]
@@ -421,12 +454,19 @@ class HfJobsExecutor(Executor):
     def _execute_detached(self, step_graph: StepGraph, run_name: Optional[str]) -> ExecutorOutput:
         from huggingface_hub import run_job
 
-        volumes = [self._sync_project(), self._upload_config(step_graph, run_name)]
+        volumes = [
+            self._sync_project(),
+            self._upload_config(step_graph, run_name, with_settings=True),
+        ]
 
-        # No `--called-by-executor` here: the driver is a full `tango run`, so it picks up this
-        # same executor from tango.yml and fans out per-step jobs of its own.
+        # No `--called-by-executor` here: the driver is a full `tango run`, so it picks its
+        # executor out of the settings file and fans out per-step jobs of its own. The settings
+        # file is one we ship alongside the config, so this works whether or not the project
+        # itself has a tango.yml.
         driver_cmd = [
             "tango",
+            "--settings",
+            f"{CONFIG_MOUNT}/{SETTINGS_FILENAME}",
             "run",
             f"{CONFIG_MOUNT}/{CONFIG_FILENAME}",
             "-w",

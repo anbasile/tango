@@ -41,6 +41,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   because the latter accepts no exclusions and would upload your virtualenv on every run.
 - `HfJobsExecutor` refuses any workspace but `HfBucketWorkspace`. A Job's disk disappears with
   its container, so pairing it with a `LocalWorkspace` would silently discard every result.
+- Re-registering a run under a name that already holds the *same* step graph is now a no-op
+  rather than an error. Detaching depends on it: the client registers the run, then the driver
+  job runs `tango run -n <name>` again inside its own container. A name reused for a different
+  graph is still rejected.
+
+### Fixed
+
+- `tango --called-by-executor run` no longer requires a parent process holding a logging socket.
+  That assumption came from `MulticoreExecutor`, whose step subprocesses sit beside their parent;
+  a step running alone in a container has no such parent and died immediately with "missing
+  logging socket configuration". It now detects the absence and initialises as the main process.
 
 ## [v2.0.0](https://github.com/anbasile/tango/releases/tag/v2.0.0) - 2026-08-06
 

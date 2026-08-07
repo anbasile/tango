@@ -197,7 +197,15 @@ def execute_step_graph(
         # We set this environment variable so that any steps that contain multiprocessing
         # and call `initialize_worker_logging` also log the messages with the `step_name` prefix.
         os.environ[EnvVarNames.LOGGING_PREFIX.value] = f"step {step_names[0]}"
-        initialize_prefix_logging(prefix=f"step {step_names[0]}", main_process=False)
+        # `MulticoreExecutor` runs each step as a child process that streams log records back
+        # to its parent over a socket, and exports the port in this variable. A remote executor
+        # has no such parent -- the step is alone in its own container -- so there is nothing to
+        # connect to and this process is itself the main one. Without this check the step dies
+        # immediately with "missing logging socket configuration".
+        has_logging_socket = os.environ.get(EnvVarNames.LOGGING_PORT.value) is not None
+        initialize_prefix_logging(
+            prefix=f"step {step_names[0]}", main_process=not has_logging_socket
+        )
 
     # Capture logs to file.
     with workspace.capture_logs_for_run(run.name) if not called_by_executor else nullcontext():

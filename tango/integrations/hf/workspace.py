@@ -152,8 +152,20 @@ class HfBucketWorkspace(RemoteWorkspace):
                 name = petname.generate() + str(random.randint(0, 100))
                 if not self._client.exists(self.Constants.run_key(name)):
                     break
-        elif self._client.exists(self.Constants.run_key(name)):
-            raise ValueError(f"Run name '{name}' is already in use")
+        else:
+            try:
+                existing = self._client.get_json(self.Constants.run_key(name))
+            except HfBucketNotFound:
+                pass
+            else:
+                # Registering the very same graph under the same name again is a no-op, not a
+                # collision. A detached run relies on this: the client registers the run, then
+                # the driver job re-runs `tango run -n <name>` in its own container and would
+                # otherwise fail before starting. A name reused for a *different* graph is
+                # still an error.
+                if (existing.get("steps") or {}) != run_data:
+                    raise ValueError(f"Run name '{name}' is already in use")
+                return self._run_from_json(existing)
 
         # Truncate to the second before returning, not just before writing: the serialised form
         # has no sub-second field, so keeping microseconds here would make the Run handed back

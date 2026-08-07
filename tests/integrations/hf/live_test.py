@@ -302,3 +302,63 @@ class TestWorkspaceEndToEnd:
         assert not client.exists(f"{artifact}/{Constants.UNCOMMITTED_FNAME}")
         assert isinstance(workspace.step_cache, HfBucketStepCache)
         assert len(workspace.step_cache) == 1
+
+
+# Unlike everything above, this one costs money -- an Inference Endpoint bills by the hour
+# while it is up. It needs a second, explicit opt-in so it can never run by accident.
+needs_paid = pytest.mark.skipif(
+    os.environ.get("TANGO_HF_PAID_TESTS") != "1",
+    reason="costs money; set TANGO_HF_PAID_TESTS=1 to run",
+)
+
+
+@needs_token
+@needs_paid
+class TestEndpointBatchStep:
+    """
+    Verified end-to-end for about $0.001: gpt2 on the cheapest CPU instance stays up for
+    roughly a minute. The endpoint is deleted afterwards whatever happens.
+    """
+
+    def test_create_generate_pause(self, tmp_path):
+        from huggingface_hub import delete_inference_endpoint, get_inference_endpoint
+
+        from tango.integrations.hf.endpoint import EndpointBatchStep
+
+        name = f"tango-test-{uuid.uuid4().hex[:8]}"
+        step = EndpointBatchStep(
+            prompts=["The capital of France is", "The opposite of hot is"],
+            endpoint_name=name,
+            repository="openai-community/gpt2",
+            task="text-generation",
+            accelerator="cpu",
+            vendor="aws",
+            region="us-east-1",
+            # Names go stale: `intel-icl` from Hugging Face's docs no longer exists.
+            instance_type="intel-spr",
+            instance_size="x1",
+            generation_kwargs={"max_new_tokens": 8, "do_sample": False},
+            max_concurrency=2,
+            timeout=900.0,
+        )
+        try:
+            results = step.result()
+            assert len(results) == 2
+            assert all(isinstance(text, str) and text for text in results)
+            # Paused in a `finally`, so it stops billing even if generation had failed.
+            assert get_inference_endpoint(name).status in {"paused", "pending"}
+        finally:
+            delete_inference_endpoint(name)
+
+    def test_missing_hardware_is_a_clear_error(self):
+        from tango.common.exceptions import ConfigurationError
+        from tango.integrations.hf.endpoint import EndpointBatchStep
+
+        step = EndpointBatchStep(
+            prompts=["x"],
+            endpoint_name=f"tango-test-{uuid.uuid4().hex[:8]}",
+            repository="openai-community/gpt2",
+        )
+        # Without this check huggingface_hub raises an opaque TypeError instead.
+        with pytest.raises(ConfigurationError, match="instance_size and instance_type"):
+            step.result()

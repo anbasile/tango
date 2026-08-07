@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from tango.integrations.hf.executor import NO_DETACH_ENV_VAR, HfJobsExecutor
@@ -284,6 +286,30 @@ class TestDetach:
         assert driver["env"][NO_DETACH_ENV_VAR] == "1"
         assert set(output.not_run) == {"add", "double"}
 
+    def test_the_driver_gets_a_settings_file_naming_this_executor(self, workspace, jobs, tmp_path):
+        """
+        Without it the driver falls back to the default executor and runs every step inside
+        the driver container instead of fanning out.
+        """
+        import yaml
+
+        executor = make_executor(workspace, tmp_path, detach=True, flavor="t4-small")
+        executor.execute_step_graph(StepGraph({"add": AddStep(a=1, b=2)}), run_name="my-run")
+
+        raw = FakeHfApi.STORE["org/bucket"]["_config/my-run/tango.yml"]
+        settings = yaml.safe_load(raw)
+        assert settings["executor"]["type"] == "hf"
+        assert settings["executor"]["flavor"] == "t4-small"
+        # The driver's own copy, already installed by its entrypoint.
+        assert settings["executor"]["project_dir"] == "/tmp/project"
+        assert "--settings /tango/config/tango.yml" in jobs.submitted[0]["command"][-1]
+
+    def test_a_step_job_gets_no_settings_file(self, workspace, jobs, tmp_path):
+        # Step jobs pass --called-by-executor, which ignores the settings executor anyway.
+        executor = make_executor(workspace, tmp_path)
+        executor.execute_step_graph(StepGraph({"add": AddStep(a=1, b=2)}), run_name="my-run")
+        assert "_config/my-run/tango.yml" not in FakeHfApi.STORE["org/bucket"]
+
     def test_a_driver_job_does_not_detach_again(self, monkeypatch, workspace, jobs, tmp_path):
         """
         Without this guard the driver would submit a driver, forever.
@@ -294,3 +320,47 @@ class TestDetach:
 
         executor.execute_step_graph(StepGraph({"add": AddStep(a=1, b=2)}), run_name="r")
         assert "--called-by-executor" in jobs.submitted[0]["command"][-1]
+
+
+class TestStandaloneStepInvocation:
+    """
+    The executor's job command is `tango --called-by-executor run ... -s <step>`, which is the
+    same entry point `MulticoreExecutor` uses. But multicore runs its children beside a parent
+    that owns a logging socket, whereas a Job's step is alone in its container. Run the command
+    the way a container does -- no TANGO_LOGGING_PORT -- and make sure it still works.
+    """
+
+    def test_runs_without_a_parent_logging_socket(self, tmp_path):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parents[3]
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"TANGO_LOGGING_PORT", "TANGO_LOGGING_PREFIX"}
+        }
+        env["PATH"] = f"{Path(sys.executable).parent}:{env.get('PATH', '')}"
+
+        result = subprocess.run(
+            [
+                "tango",
+                "--called-by-executor",
+                "run",
+                str(repo / "test_fixtures" / "integrations" / "hf" / "config.jsonnet"),
+                "-s",
+                "make",
+                "-w",
+                str(tmp_path / "ws"),
+                "-i",
+                "test_fixtures.integrations.hf.components",
+            ],
+            cwd=repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        assert "missing logging socket configuration" not in result.stderr
+        assert result.returncode == 0, result.stderr[-3000:]

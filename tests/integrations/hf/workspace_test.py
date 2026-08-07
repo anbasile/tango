@@ -199,10 +199,21 @@ class TestRuns:
         assert first.name != second.name
         assert set(workspace.registered_runs()) == {first.name, second.name}
 
-    def test_duplicate_name_is_rejected(self, workspace):
+    def test_a_different_graph_under_a_used_name_is_rejected(self, workspace):
         workspace.register_run([AddStep(a=1, b=2)], name="taken")
         with pytest.raises(ValueError, match="already in use"):
             workspace.register_run([AddStep(a=3, b=4)], name="taken")
+
+    def test_re_registering_the_same_graph_is_a_no_op(self, workspace):
+        """
+        A detached run depends on this: the client registers the run, then the driver job runs
+        `tango run -n <name>` again inside its own container.
+        """
+        first = workspace.register_run([AddStep(a=1, b=2)], name="same")
+        again = workspace.register_run([AddStep(a=1, b=2)], name="same")
+        assert again.name == first.name
+        assert again.start_date == first.start_date
+        assert set(workspace.registered_runs()) == {"same"}
 
     def test_unknown_run_raises(self, workspace):
         with pytest.raises(KeyError):

@@ -30,6 +30,11 @@ class EndpointBatchStep(Step):
         That warning is accurate. Pass ``{"do_sample": false}`` in ``generation_kwargs`` for
         greedy decoding if you need it to be stable.
 
+    .. tip::
+        ``instance_type`` names change as hardware is retired — Hugging Face's own docs still
+        show ``intel-icl``, which no longer exists. Check what is actually available with
+        ``hf endpoints hardware`` before configuring a step.
+
     :examples:
 
     .. code:: json
@@ -39,8 +44,9 @@ class EndpointBatchStep(Step):
             "prompts": ["Label this: ...", "Label this: ..."],
             "endpoint_name": "annotation-endpoint",
             "repository": "Qwen/Qwen3-0.6B",
+            "accelerator": "cpu",
+            "instance_type": "intel-spr",
             "instance_size": "x1",
-            "instance_type": "nvidia-a10g",
             "generation_kwargs": {"max_new_tokens": 16, "do_sample": false}
         }
     """
@@ -64,6 +70,18 @@ class EndpointBatchStep(Step):
                 raise ConfigurationError(
                     f"Inference endpoint '{name}' does not exist and no 'repository' was given "
                     f"to create it with."
+                )
+            # These are required by `create_inference_endpoint`, and leaving them out produces
+            # an opaque TypeError from deep inside huggingface_hub. Say what is missing, and
+            # make the user choose the hardware rather than picking billable hardware for them.
+            missing = [
+                field for field in ("instance_size", "instance_type") if not kwargs.get(field)
+            ]
+            if missing:
+                raise ConfigurationError(
+                    f"Creating inference endpoint '{name}' needs {' and '.join(missing)}. "
+                    f"Run `hf endpoints hardware` to see the options, e.g. "
+                    f"instance_type='intel-icl', instance_size='x2' for CPU."
                 )
         self.logger.info("Creating endpoint '%s' for %s...", name, kwargs["repository"])
         return create_inference_endpoint(
@@ -105,7 +123,8 @@ class EndpointBatchStep(Step):
         instance_type: Optional[str] = None,
         vendor: str = "aws",
         region: str = "us-east-1",
-        endpoint_type: str = "protected",
+        # "protected" is deprecated upstream in favour of "authenticated".
+        endpoint_type: str = "authenticated",
         custom_image: Optional[Dict[str, Any]] = None,
         scale_to_zero_timeout: Optional[int] = None,
         namespace: Optional[str] = None,
