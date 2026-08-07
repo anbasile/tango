@@ -5,7 +5,7 @@ from tango.integrations.hf.workspace import HfBucketWorkspace
 from tango.step import Step, StepResources
 from tango.step_graph import StepGraph
 
-from .fake_hub import install_fakes, install_job_fakes
+from .fake_hub import FakeHfApi, install_fakes, install_job_fakes
 
 
 @Step.register("hf_exec_add")
@@ -124,11 +124,84 @@ class TestSubmission:
         assert secrets["HF_S3_ACCESS_KEY_ID"] == "HFAKTEST"
         assert secrets["HF_S3_SECRET_ACCESS_KEY"] == "secret"
 
-    def test_both_mounts_are_synced(self, workspace, jobs, tmp_path):
+    def test_both_mounts_are_attached_read_only(self, workspace, jobs, tmp_path):
         executor = make_executor(workspace, tmp_path)
         executor.execute_step_graph(StepGraph({"train": AddStep(a=1, b=2)}), run_name="r")
 
-        assert [mount for _, mount in jobs.volumes] == ["/tango/project", "/tango/config"]
+        volumes = jobs.submitted[0]["volumes"]
+        assert [v.mount_path for v in volumes] == ["/tango/project", "/tango/config"]
+        assert all(v.type == "bucket" and v.read_only for v in volumes)
+        assert all(v.source == "org/bucket" for v in volumes)
+
+
+class TestProjectSync:
+    """
+    `sync_job_volume` takes no exclusions, so the project goes through `sync_bucket` instead.
+    Getting this wrong means uploading the virtualenv on every run.
+    """
+
+    def _tree(self, root):
+        for relative in (
+            "main.py",
+            "pkg/mod.py",
+            "pkg/__pycache__/mod.pyc",
+            ".venv/lib/torch/x.so",
+            ".git/objects/ab/cdef",
+            "data/keep.jsonl",
+        ):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("x")
+
+    def _uploaded(self, prefix="_project/"):
+        return sorted(
+            key.split("/", 2)[-1] for key in FakeHfApi.STORE["org/bucket"] if key.startswith(prefix)
+        )
+
+    def test_venv_git_and_pycache_are_not_uploaded(self, workspace, jobs, tmp_path):
+        self._tree(tmp_path)
+        executor = make_executor(workspace, tmp_path)
+        executor.execute_step_graph(StepGraph({"train": AddStep(a=1, b=2)}), run_name="r")
+
+        assert self._uploaded() == ["data/keep.jsonl", "main.py", "pkg/mod.py"]
+
+    def test_exclusions_can_be_overridden(self, workspace, jobs, tmp_path):
+        self._tree(tmp_path)
+        executor = make_executor(workspace, tmp_path, project_exclude=["data/**"])
+        executor.execute_step_graph(StepGraph({"train": AddStep(a=1, b=2)}), run_name="r")
+
+        uploaded = self._uploaded()
+        assert "data/keep.jsonl" not in uploaded
+        assert ".venv/lib/torch/x.so" in uploaded, "override should replace, not extend"
+
+    def test_the_config_is_uploaded_where_the_command_looks_for_it(self, workspace, jobs, tmp_path):
+        executor = make_executor(workspace, tmp_path)
+        executor.execute_step_graph(StepGraph({"train": AddStep(a=1, b=2)}), run_name="my-run")
+
+        assert "_config/my-run/config.jsonnet" in FakeHfApi.STORE["org/bucket"]
+        config_volume = jobs.submitted[0]["volumes"][1]
+        assert config_volume.path == "_config/my-run"
+
+    def test_a_deleted_file_stops_being_mirrored(self, workspace, jobs, tmp_path):
+        self._tree(tmp_path)
+        executor = make_executor(workspace, tmp_path)
+        executor.execute_step_graph(StepGraph({"train": AddStep(a=1, b=2)}), run_name="r")
+        assert "pkg/mod.py" in self._uploaded()
+
+        (tmp_path / "pkg" / "mod.py").unlink()
+        executor.execute_step_graph(StepGraph({"train": AddStep(a=3, b=4)}), run_name="r2")
+        assert "pkg/mod.py" not in self._uploaded()
+
+
+class TestWorkspaceRequirement:
+    def test_an_ephemeral_workspace_is_refused(self, jobs, tmp_path):
+        from tango.common.exceptions import ConfigurationError
+        from tango.workspaces import LocalWorkspace
+
+        # A Job's local disk vanishes with the container, so a LocalWorkspace would silently
+        # lose every result.
+        with pytest.raises(ConfigurationError, match="HfBucketWorkspace"):
+            HfJobsExecutor(LocalWorkspace(tmp_path / "ws"), project_dir=str(tmp_path))
 
     def test_timeout_is_an_hour_not_the_platform_default(self, workspace, jobs, tmp_path):
         # The platform kills jobs after 30 minutes by default, which is too short to train.

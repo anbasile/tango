@@ -2,8 +2,10 @@ import itertools
 
 import pytest
 
+from tango.integrations.hf.common import HfBucketNotFound
 from tango.integrations.hf.workspace import HfBucketWorkspace
 from tango.step import Step
+from tango.step_caches.remote_step_cache import RemoteNotFoundError
 from tango.step_info import StepState
 from tango.workspace import Workspace
 
@@ -144,6 +146,38 @@ class TestStepExecution:
         assert len(fresh.step_cache) == 0
 
 
+class TestProbedHubBehaviour:
+    """
+    Cases where the real Hub is more forgiving than you would guess, each confirmed by probing
+    it. The fakes reproduce the real behaviour, so these exercise the code paths that actually
+    run in production.
+    """
+
+    def test_a_missing_object_is_reported_even_though_the_hub_does_not_raise(self, workspace):
+        # `download_bucket_files` warns and skips rather than raising, so `get_bytes` can only
+        # tell by checking whether the file appeared.
+        with pytest.raises(HfBucketNotFound):
+            workspace.step_cache.client.get_bytes("nowhere/absent.json")
+
+    def test_a_vanished_artifact_is_a_cache_miss_not_an_empty_directory(self, workspace, tmp_path):
+        # `sync_bucket` treats a prefix with no objects as "nothing to do". Without an explicit
+        # check the caller would get an empty directory and a confusing failure much later.
+        with pytest.raises(RemoteNotFoundError):
+            workspace.step_cache._download_step_remote("tango-step-never-existed", tmp_path / "out")
+
+    def test_a_partial_artifact_is_a_cache_miss(self, workspace, tmp_path):
+        step = AddStep(a=5, b=5)
+        step.ensure_result(workspace)
+
+        # Lose the metadata but keep the payload, as an interrupted delete would.
+        cache = workspace.step_cache
+        artifact = cache.Constants.step_artifact_name(step)
+        cache.client.delete(f"{artifact}/{cache.METADATA_FILE_NAME}")
+
+        with pytest.raises(RemoteNotFoundError):
+            cache._download_step_remote(artifact, tmp_path / "out")
+
+
 class TestRuns:
     def test_register_and_read_back(self, workspace):
         step = AddStep(a=1, b=2)
@@ -152,6 +186,12 @@ class TestRuns:
         assert run.name == "my-run"
         assert workspace.registered_run("my-run").steps.keys() == run.steps.keys()
         assert set(workspace.registered_runs()) == {"my-run"}
+
+    def test_the_returned_run_matches_the_stored_one(self, workspace):
+        # The serialised timestamp has no sub-second field, so an untruncated start_date here
+        # would not survive a round trip.
+        run = workspace.register_run([AddStep(a=1, b=2)], name="round-trip")
+        assert workspace.registered_run("round-trip").start_date == run.start_date
 
     def test_generated_names_are_unique(self, workspace):
         first = workspace.register_run([AddStep(a=1, b=2)])

@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The lock records who holds it, so a dead holder is recoverable: a Job's liveness is settled by
   the Jobs API, and a local process refreshes a heartbeat. The old Google Storage integration had
   no such notion and left crashed runs holding a lock until somebody deleted it by hand.
+- The project mirror skips `.venv`, `.git`, `__pycache__` and friends by default
+  (`project_exclude`). It goes through `sync_bucket` rather than `sync_job_volume` precisely
+  because the latter accepts no exclusions and would upload your virtualenv on every run.
+- `HfJobsExecutor` refuses any workspace but `HfBucketWorkspace`. A Job's disk disappears with
+  its container, so pairing it with a `LocalWorkspace` would silently discard every result.
 
 ## [v2.0.0](https://github.com/anbasile/tango/releases/tag/v2.0.0) - 2026-08-06
 

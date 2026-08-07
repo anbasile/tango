@@ -12,6 +12,10 @@ workspace/
 # dev tools
 
 .envrc
+.env
+.env.*
+.aws_config
+.aws_credentials
 .python-version
 .idea
 .venv/

@@ -9,16 +9,40 @@ which is the whole basis of the step lock.
 
 import io
 import os
+import re
+import warnings
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 
 @dataclass
 class FakeEntry:
+    """
+    Shaped like a real ``list_bucket_tree`` entry, which carries
+    ``type/path/size/xet_hash/mtime/uploaded_at``.
+    """
+
     path: str
     type: str
     size: int = 0
+    xet_hash: str = "0" * 64
+    mtime: datetime = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    uploaded_at: datetime = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _glob_matches(pattern: str, path: str) -> bool:
+    """
+    Reproduce how ``sync_bucket`` actually matches exclude patterns, as probed against the Hub:
+
+    - patterns are anchored at both ends, so ``__pycache__/*`` does not match
+      ``pkg/__pycache__/x.pyc``;
+    - ``*`` crosses ``/``, so ``.venv/*`` matches ``.venv/lib/site-packages/torch/x.so``;
+    - consequently a bare ``.venv`` matches nothing at all.
+    """
+    regex = re.escape(pattern).replace(r"\*\*", ".*").replace(r"\*", ".*").replace(r"\?", ".")
+    return re.fullmatch(regex, path) is not None
 
 
 def _split_uri(uri: str) -> Optional[Tuple[str, str]]:
@@ -52,7 +76,15 @@ class FakeHfApi:
 
     def create_bucket(self, bucket_id: str, exist_ok: bool = False, **kwargs: Any) -> str:
         if bucket_id in self.STORE and not exist_ok:
-            raise ValueError(f"Bucket {bucket_id} already exists")
+            # Probed against the Hub: a conflict is a 409 HfHubHTTPError, not a ValueError.
+            # It insists on a real httpx.Response, so build one.
+            import httpx
+            from huggingface_hub.errors import HfHubHTTPError
+
+            raise HfHubHTTPError(
+                f"409 Conflict: you already created {bucket_id}",
+                response=httpx.Response(409, request=httpx.Request("POST", "https://hf.co")),
+            )
         self.STORE.setdefault(bucket_id, {})
         return f"hf://buckets/{bucket_id}"
 
@@ -92,19 +124,41 @@ class FakeHfApi:
         for remote in delete or []:
             files.pop(remote.strip("/"), None)
 
+    def get_bucket_paths_info(
+        self, bucket_id: str, paths: Sequence[str], **kwargs: Any
+    ) -> List[FakeEntry]:
+        # Probed against the Hub: missing paths are omitted, not reported.
+        store = self._files(bucket_id)
+        return [
+            FakeEntry(path.strip("/"), "file", len(store[path.strip("/")]))
+            for path in paths
+            if path.strip("/") in store
+        ]
+
     def download_bucket_files(
         self, bucket_id: str, files: Sequence[Tuple[Any, str]], **kwargs: Any
     ) -> None:
+        # Probed against the Hub: a missing key warns and is skipped -- it does *not* raise, and
+        # no local file appears. Reproducing that here is the point; a fake that raised would
+        # make `HfBucketClient.get_bytes` pass on an exception path the real API never takes.
         store = self._files(bucket_id)
         for remote, local in files:
             key = (remote.path if hasattr(remote, "path") else str(remote)).strip("/")
             if key not in store:
-                raise FileNotFoundError(key)
+                warnings.warn(f"File '{key}' not found in bucket '{bucket_id}'. Skipping.")
+                continue
             target = Path(local)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(store[key])
 
-    def sync_bucket(self, source: str, destination: str, **kwargs: Any) -> None:
+    def sync_bucket(
+        self,
+        source: str,
+        destination: str,
+        exclude: Optional[Sequence[str]] = None,
+        delete: bool = False,
+        **kwargs: Any,
+    ) -> None:
         source_parts = _split_uri(source)
         destination_parts = _split_uri(destination)
 
@@ -114,25 +168,40 @@ class FakeHfApi:
             root = Path(source)
             if not root.is_dir():
                 raise FileNotFoundError(source)
+
+            uploaded = set()
             for path in sorted(root.rglob("*")):
-                if path.is_file():
-                    key = f"{prefix}/{path.relative_to(root)}".strip("/")
-                    store[key] = path.read_bytes()
+                if not path.is_file():
+                    continue
+                relative = str(path.relative_to(root))
+                if any(_glob_matches(pattern, relative) for pattern in exclude or []):
+                    continue
+                key = f"{prefix}/{relative}".strip("/")
+                store[key] = path.read_bytes()
+                uploaded.add(key)
+
+            if delete:
+                stale = [
+                    key
+                    for key in store
+                    if key.startswith(prefix.strip("/") + "/") and key not in uploaded
+                ]
+                for key in stale:
+                    del store[key]
         elif source_parts is not None and destination_parts is None:  # download
+            # Probed against the Hub: a prefix holding no objects is "Nothing to sync", not an
+            # error. So this must not raise either, or `_download_step_remote` would look
+            # correct offline while silently producing an empty directory in production.
             bucket_id, prefix = source_parts
             store = self._files(bucket_id)
             root = Path(destination)
-            matched = False
             for key, data in store.items():
                 if not key.startswith(prefix.strip("/")):
                     continue
-                matched = True
                 relative = key[len(prefix.strip("/")) :].strip("/")
                 target = root / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
-            if not matched:
-                raise FileNotFoundError(source)
         else:
             raise ValueError(f"Cannot sync {source} -> {destination}")
 

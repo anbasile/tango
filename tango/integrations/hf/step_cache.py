@@ -81,6 +81,14 @@ class HfBucketStepCache(RemoteStepCache):
                 raise RemoteNotFoundError(self._client.url(step_result)) from exc
             raise
 
+        # `sync_bucket` treats a prefix holding no objects as "nothing to do" and returns
+        # quietly rather than raising. Callers reach here after `_step_result_remote` said the
+        # artifact was there, so a step removed in between would otherwise leave an empty
+        # directory and surface much later as a confusing read error on the metadata file.
+        # Report it as the cache miss it is.
+        if not (Path(target_dir) / self.METADATA_FILE_NAME).is_file():
+            raise RemoteNotFoundError(self._client.url(step_result))
+
     def committed_step_ids(self) -> Iterator[str]:
         """
         The unique ids of every finished step in the bucket.

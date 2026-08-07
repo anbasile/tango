@@ -155,7 +155,10 @@ class HfBucketWorkspace(RemoteWorkspace):
         elif self._client.exists(self.Constants.run_key(name)):
             raise ValueError(f"Run name '{name}' is already in use")
 
-        start_date = utc_now_datetime()
+        # Truncate to the second before returning, not just before writing: the serialised form
+        # has no sub-second field, so keeping microseconds here would make the Run handed back
+        # differ from the one any later `registered_run()` reads.
+        start_date = utc_now_datetime().replace(microsecond=0)
         self._client.put_json(
             self.Constants.run_key(name),
             {

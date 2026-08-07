@@ -11,6 +11,7 @@ import socket
 import tempfile
 import threading
 import time
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -37,6 +38,8 @@ class Constants(RemoteConstants):
 
     STEP_INFO_DIR: str = "stepinfo"
     RUNS_DIR: str = "runs"
+    PROJECT_DIR: str = "_project"
+    CONFIG_DIR: str = "_config"
     SETTINGS_FNAME: str = "settings.json"
     UNCOMMITTED_FNAME: str = ".uncommitted"
     RUN_LOG_FNAME: str = "out.log"
@@ -189,13 +192,23 @@ class HfBucketClient:
         with tempfile.TemporaryDirectory() as tmp_dir:
             local = Path(tmp_dir) / "object"
             try:
-                self._api.download_bucket_files(
-                    self.bucket_id, files=[(self.key(path), str(local))]
-                )
+                with warnings.catch_warnings():
+                    # A miss is an ordinary outcome here -- `step_info` uses it to mean "this
+                    # step has never run" -- but the Hub warns on every one, which would put a
+                    # "File ... not found in bucket. Skipping." line in front of the user for
+                    # each new step. Only this one message is suppressed.
+                    warnings.filterwarnings(
+                        "ignore", message=r"File .* not found in bucket", category=UserWarning
+                    )
+                    self._api.download_bucket_files(
+                        self.bucket_id, files=[(self.key(path), str(local))]
+                    )
             except Exception as exc:
                 if _is_not_found(exc):
                     raise HfBucketNotFound(self.url(path)) from exc
                 raise
+            # The Hub does not raise for a missing key: it warns and skips, leaving no file.
+            # This check, not the handler above, is what actually detects a miss.
             if not local.is_file():
                 raise HfBucketNotFound(self.url(path))
             return local.read_bytes()

@@ -1,4 +1,5 @@
 import concurrent.futures
+import hashlib
 import logging
 import os
 import shlex
@@ -7,7 +8,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from tango.common.exceptions import (
     CancellationError,
@@ -21,7 +22,7 @@ from tango.step import Step
 from tango.step_graph import StepGraph
 from tango.workspace import Workspace
 
-from .common import TERMINAL_JOB_STAGES, resolve_flavor
+from .common import TERMINAL_JOB_STAGES, Constants, resolve_flavor
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,29 @@ CONFIG_FILENAME = "config.jsonnet"
 
 #: Set in the driver job so the executor inside it fans out instead of detaching again.
 NO_DETACH_ENV_VAR = "TANGO_HF_NO_DETACH"
+
+DEFAULT_PROJECT_EXCLUDE: Tuple[str, ...] = tuple(
+    pattern
+    for name in (
+        ".venv",
+        "venv",
+        ".git",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".tox",
+        "node_modules",
+        "*.egg-info",
+    )
+    # Both forms are needed. Probing the Hub showed that a bare name like ".venv" matches
+    # nothing at all, "X/**" only matches at the root, and "**/X/**" only matches below it.
+    for pattern in (f"{name}/**", f"**/{name}/**")
+) + ("*.pyc", "**/*.pyc", ".DS_Store", "**/.DS_Store")
+"""
+Excluded from the project upload by default. Without these, a routine ``tango run`` would push
+the virtualenv and the whole git history to the Hub on every invocation.
+"""
 
 
 class StepFailedError(ExecutorError):
@@ -71,10 +95,12 @@ class HfJobsExecutor(Executor):
         :class:`~tango.workspaces.LocalWorkspace` would lose every result.
 
     Unlike the old Beaker executor, your code does not have to be committed and pushed
-    anywhere. ``project_dir`` is synced to your private ``jobs-artifacts`` bucket and mounted
-    into the container, so uncommitted work runs as-is.
+    anywhere. ``project_dir`` is mirrored into the workspace bucket and mounted read-only into
+    the container, so uncommitted work runs as-is. The mirror is incremental and skips
+    :data:`DEFAULT_PROJECT_EXCLUDE` — without which a routine run would upload your virtualenv.
 
-    :param workspace: The workspace to use.
+    :param workspace: The workspace to use. Must be an
+        :class:`~tango.integrations.hf.workspace.HfBucketWorkspace`.
     :param include_package: Packages to import before running steps.
     :param parallelism: Maximum number of steps in flight at once.
     :param image: Docker image to run steps in.
@@ -119,11 +145,24 @@ class HfJobsExecutor(Executor):
         env: Optional[Dict[str, str]] = None,
         secrets: Optional[Dict[str, str]] = None,
         project_dir: str = ".",
+        project_exclude: Optional[Sequence[str]] = None,
         detach: bool = False,
         token: Optional[str] = None,
         poll_interval: float = 10.0,
     ) -> None:
         super().__init__(workspace, include_package=include_package, parallelism=parallelism)
+
+        from .workspace import HfBucketWorkspace
+
+        if not isinstance(workspace, HfBucketWorkspace):
+            # Jobs are ephemeral: whatever a step writes to local disk is gone when the
+            # container exits. Beaker's executor only warned about this in its docstring and
+            # let you lose a day's results; refuse instead.
+            raise ConfigurationError(
+                f"{type(self).__name__} needs an HfBucketWorkspace, because results have to "
+                f"outlive the container that produced them. Got "
+                f"{type(workspace).__name__}. Use `-w hf://buckets/<namespace>/<bucket>`."
+            )
 
         self.image = image
         self.flavor = flavor
@@ -131,6 +170,9 @@ class HfJobsExecutor(Executor):
         self.namespace = namespace
         self.env = dict(env or {})
         self.project_dir = Path(project_dir).resolve()
+        self.project_exclude = list(
+            project_exclude if project_exclude is not None else DEFAULT_PROJECT_EXCLUDE
+        )
         self.poll_interval = poll_interval
         self.max_thread_workers = max(1, parallelism or 1)
 
@@ -210,18 +252,55 @@ class HfJobsExecutor(Executor):
 
         return ["bash", "-c", "\n".join(script)]
 
+    @property
+    def _client(self) -> Any:
+        # Guaranteed by the workspace type check in __init__.
+        return self.workspace.step_cache.client  # type: ignore[attr-defined]
+
+    def _mount(self, prefix: str, mount_path: str) -> Any:
+        from huggingface_hub import Volume
+
+        return Volume(
+            type="bucket",
+            source=self._client.bucket_id,
+            mount_path=mount_path,
+            path=self._client.key(prefix),
+            read_only=True,
+        )
+
+    def _sync_project(self) -> Any:
+        """
+        Mirror the project into the workspace bucket and return a read-only mount of it.
+
+        This goes through ``sync_bucket`` rather than ``sync_job_volume`` for one reason:
+        ``sync_job_volume`` takes no exclusions, so it would upload ``.venv`` and ``.git`` on
+        every run. The prefix is keyed on the project path, so re-runs are incremental.
+        """
+        digest = hashlib.sha256(str(self.project_dir).encode()).hexdigest()[:12]
+        prefix = f"{Constants.PROJECT_DIR}/{digest}"
+
+        cli_logger.info("[blue]Syncing %s to the workspace bucket...[/]", self.project_dir)
+        self._client.api.sync_bucket(
+            str(self.project_dir),
+            f"hf://buckets/{self._client.bucket_id}/{self._client.key(prefix)}",
+            exclude=self.project_exclude,
+            # Keep the remote a mirror, so a file deleted locally stops being importable.
+            delete=True,
+            quiet=True,
+        )
+        return self._mount(prefix, PROJECT_MOUNT)
+
+    def _upload_config(self, step_graph: StepGraph, run_name: Optional[str]) -> Any:
+        with tempfile.TemporaryDirectory(prefix="tango-hf-config-") as config_dir:
+            local = Path(config_dir) / CONFIG_FILENAME
+            step_graph.to_file(local, include_unique_id=True)
+            prefix = f"{Constants.CONFIG_DIR}/{run_name or 'run'}"
+            self._client.put_bytes(f"{prefix}/{CONFIG_FILENAME}", local.read_bytes())
+        return self._mount(prefix, CONFIG_MOUNT)
+
     def _prepare_run_context(self, step_graph: StepGraph, run_name: Optional[str]) -> _RunContext:
-        from huggingface_hub import sync_job_volume
-
-        config_dir = tempfile.TemporaryDirectory(prefix="tango-hf-config-")
-        step_graph.to_file(Path(config_dir.name) / CONFIG_FILENAME, include_unique_id=True)
-
-        cli_logger.info("[blue]Syncing %s to Hugging Face...[/]", self.project_dir)
-        volumes = [
-            sync_job_volume(str(self.project_dir), PROJECT_MOUNT, token=self.token),
-            sync_job_volume(config_dir.name, CONFIG_MOUNT, token=self.token),
-        ]
-        return _RunContext(volumes=volumes, run_name=run_name, temp_dirs=[config_dir])
+        volumes = [self._sync_project(), self._upload_config(step_graph, run_name)]
+        return _RunContext(volumes=volumes, run_name=run_name)
 
     def _find_running_job(self, step: Step) -> Optional[Any]:
         """
@@ -340,16 +419,9 @@ class HfJobsExecutor(Executor):
                 logger.debug("Could not cancel job %s.", job_id, exc_info=True)
 
     def _execute_detached(self, step_graph: StepGraph, run_name: Optional[str]) -> ExecutorOutput:
-        from huggingface_hub import run_job, sync_job_volume
+        from huggingface_hub import run_job
 
-        config_dir = tempfile.TemporaryDirectory(prefix="tango-hf-config-")
-        step_graph.to_file(Path(config_dir.name) / CONFIG_FILENAME, include_unique_id=True)
-
-        cli_logger.info("[blue]Syncing %s to Hugging Face...[/]", self.project_dir)
-        volumes = [
-            sync_job_volume(str(self.project_dir), PROJECT_MOUNT, token=self.token),
-            sync_job_volume(config_dir.name, CONFIG_MOUNT, token=self.token),
-        ]
+        volumes = [self._sync_project(), self._upload_config(step_graph, run_name)]
 
         # No `--called-by-executor` here: the driver is a full `tango run`, so it picks up this
         # same executor from tango.yml and fans out per-step jobs of its own.
@@ -386,7 +458,6 @@ class HfJobsExecutor(Executor):
             labels={"tango-run": run_name or "", "name": f"tango-driver-{run_name or 'run'}"},
             token=self.token,
         )
-        config_dir.cleanup()
 
         cli_logger.info(
             "[green]\N{CHECK MARK} Submitted driver job [bold]%s[/]. "
