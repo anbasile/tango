@@ -4,7 +4,7 @@ import os
 import sys
 import warnings
 from contextlib import contextmanager, nullcontext
-from typing import TYPE_CHECKING, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 
 from tango.common.exceptions import CliRunError
 from tango.common.logging import (
@@ -118,12 +118,21 @@ def prepare_executor(
     parallelism: Optional[int] = None,
     multicore: Optional[bool] = None,
     called_by_executor: bool = False,
+    executor_options: Optional[Dict[str, Any]] = None,
 ) -> Executor:
     from tango.executors import MulticoreExecutor
     from tango.workspaces import MemoryWorkspace
 
     if settings is None:
         settings = TangoGlobalSettings.default()
+
+    if executor_options and not called_by_executor:
+        if settings.executor is None:
+            raise CliRunError(
+                "--executor-option changes the executor of the settings file, and "
+                f"{settings.path or 'the settings'} names none."
+            )
+        settings.executor = {**settings.executor, **executor_options}
 
     executor: Executor
     if not called_by_executor and settings.executor is not None:
@@ -161,6 +170,85 @@ def prepare_executor(
             executor = Executor(workspace=workspace, include_package=include_package)
 
     return executor
+
+
+def dry_run(
+    step_graph: StepGraph,
+    workspace: Workspace,
+    executor: Executor,
+    name: Optional[str] = None,
+    expect: Optional[Sequence[str]] = None,
+) -> List[str]:
+    """
+    Say what ``tango run`` would do, and do none of it: no run is registered, nothing is
+    uploaded, no step is started.
+
+    Lists the steps that have no result in the workspace, each with its state and with where
+    the executor would run it. With the ``name`` of an existing run, steps that are new or
+    whose identity changed since that run are marked: a changed identity is how a finished
+    step gets run, and paid for, a second time.
+
+    :param expect: Shell-style patterns for the step names allowed to run. Raises
+        :class:`~tango.common.exceptions.CliRunError` when a pending step matches none; an
+        empty list means that nothing is expected to run.
+    :returns: The names of the steps that would run.
+    """
+    from fnmatch import fnmatch
+
+    previous: Optional[Dict[str, str]] = None
+    if name is not None:
+        reader = getattr(workspace, "run_step_ids", None)
+        if reader is not None:
+            previous = reader(name)
+        else:
+            try:
+                previous = {
+                    step_name: info.unique_id
+                    for step_name, info in workspace.registered_run(name).steps.items()
+                }
+            except KeyError:
+                previous = None
+
+    uncacheable_leaves = step_graph.uncacheable_leaf_steps()
+    pending: List[str] = []
+    lines: List[str] = []
+    for step_name, step in step_graph.items():
+        if step.cache_results:
+            if step in workspace.step_cache:
+                continue
+            try:
+                state = workspace.step_info(step.unique_id).state.value
+            except KeyError:
+                state = "incomplete"
+        elif step in uncacheable_leaves:
+            state = "uncacheable"
+        else:
+            # Runs only inside the steps that depend on it.
+            continue
+
+        notes = [executor.describe_step(step), state]
+        if previous is not None:
+            if step_name not in previous:
+                notes.append(f"new in run '{name}'")
+            elif previous[step_name] != step.unique_id:
+                notes.append(f"IDENTITY CHANGED since run '{name}'")
+        pending.append(step_name)
+        lines.append(f"  {step_name}  [{'; '.join(notes)}]")
+
+    print(f"{len(pending)} of {len(step_graph)} steps would run")
+    for line in lines:
+        print(line)
+
+    if expect is not None:
+        unexpected = [
+            step_name
+            for step_name in pending
+            if not any(fnmatch(step_name, pattern) for pattern in expect)
+        ]
+        if unexpected:
+            print(f"UNEXPECTED: {', '.join(unexpected)}")
+            raise CliRunError(f"{len(unexpected)} step(s) would run that --expect does not allow.")
+    return pending
 
 
 def execute_step_graph(

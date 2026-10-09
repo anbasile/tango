@@ -73,10 +73,14 @@ from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Union
 
 import click
+import yaml
 from click_help_colors import HelpColorsCommand, HelpColorsGroup
 
 from tango.cli import (
     cleanup_cli,
+)
+from tango.cli import dry_run as dry_run_step_graph
+from tango.cli import (
     execute_step_graph,
     initialize_cli,
     load_settings,
@@ -238,6 +242,29 @@ def cleanup(*args, **kwargs):
     For example, --ext-var 'pretrained_model=gpt2'.""",
     multiple=True,
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="""List the steps that would run, with where the executor would run each, and stop.
+    Nothing is registered, uploaded or started. With -n/--name of an existing run, steps that
+    are new or changed identity since that run are marked.""",
+)
+@click.option(
+    "--expect",
+    type=str,
+    multiple=True,
+    help="""A shell-style pattern for the names of the steps allowed to run, e.g. 'train-*'.
+    Can be given several times. If any other step would run, nothing is started and the
+    command fails. Use --expect '' to say that nothing should run. Without --dry-run the run
+    goes ahead once the check passes.""",
+)
+@click.option(
+    "--executor-option",
+    type=str,
+    multiple=True,
+    help="""KEY=VALUE, overriding one parameter of the executor in the settings file for this
+    run, e.g. --executor-option detach=true. The value is read as YAML.""",
+)
 @click.pass_obj
 def run(
     obj: SettingsObject,
@@ -250,6 +277,9 @@ def run(
     step_name: Optional[Sequence[str]] = None,
     name: Optional[str] = None,
     ext_var: Optional[Sequence[str]] = None,
+    dry_run: bool = False,
+    expect: Optional[Sequence[str]] = None,
+    executor_option: Optional[Sequence[str]] = None,
 ):
     """
     Run a tango experiment.
@@ -282,6 +312,9 @@ def run(
         name=name,
         called_by_executor=obj.called_by_executor,
         ext_var=ext_var,
+        dry_run=dry_run,
+        expect=expect,
+        executor_option=executor_option,
     )
 
 
@@ -545,7 +578,10 @@ def _run(
     name: Optional[str] = None,
     called_by_executor: bool = False,
     ext_var: Optional[Sequence[str]] = None,
-) -> str:
+    dry_run: bool = False,
+    expect: Optional[Sequence[str]] = None,
+    executor_option: Optional[Sequence[str]] = None,
+) -> Optional[str]:
     # Read params.
     ext_vars: Dict[str, str] = {}
     for var in ext_var or []:
@@ -555,6 +591,13 @@ def _run(
             raise CliRunError(f"Invalid --ext-var '{var}'")
         ext_vars[key] = value
     params = Params.from_file(experiment, params_overrides=overrides or "", ext_vars=ext_vars)
+
+    executor_options: Dict[str, Any] = {}
+    for option in executor_option or []:
+        key, separator, value = option.partition("=")
+        if not separator or not key.strip():
+            raise CliRunError(f"Invalid --executor-option '{option}': expected KEY=VALUE")
+        executor_options[key.strip()] = yaml.safe_load(value)
 
     # Import included packages to find registered components.
     # NOTE: The Executor imports these as well because it's meant to be used
@@ -589,7 +632,14 @@ def _run(
         parallelism=parallelism,
         multicore=multicore,
         called_by_executor=called_by_executor,
+        executor_options=executor_options,
     )
+
+    if dry_run or expect:
+        # `expect` alone is a gate: the run goes ahead only if no other step would run.
+        dry_run_step_graph(step_graph, workspace, executor, name=name, expect=expect or None)
+        if dry_run:
+            return None
 
     run_name = execute_step_graph(
         step_graph=step_graph,

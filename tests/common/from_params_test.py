@@ -1094,3 +1094,26 @@ class Baz(FromParams):
     @property
     def bar(self):
         return self._bar.construct()
+
+
+def test_any_takes_a_nested_dict_as_it_comes():
+    # Since Python 3.11 `typing.Any` is a class, and a nested dictionary under a parameter
+    # annotated `Dict[str, Any]` was "constructed" by calling `Any(...)`.
+    from typing import Any, Dict
+
+    class Holder(FromParams):
+        def __init__(self, options: Dict[str, Any], anything: Any = None) -> None:
+            self.options = options
+            self.anything = anything
+
+    holder = Holder.from_params(
+        Params(
+            {
+                "options": {"flat": 1, "nested": {"a": {"b": [1, 2]}}, "items": [{"x": 1}]},
+                "anything": {"k": "v"},
+            }
+        )
+    )
+    assert holder.options == {"flat": 1, "nested": {"a": {"b": [1, 2]}}, "items": [{"x": 1}]}
+    assert type(holder.options["nested"]) is dict
+    assert holder.anything == {"k": "v"}
