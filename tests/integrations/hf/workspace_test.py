@@ -199,11 +199,6 @@ class TestRuns:
         assert first.name != second.name
         assert set(workspace.registered_runs()) == {first.name, second.name}
 
-    def test_a_different_graph_under_a_used_name_is_rejected(self, workspace):
-        workspace.register_run([AddStep(a=1, b=2)], name="taken")
-        with pytest.raises(ValueError, match="already in use"):
-            workspace.register_run([AddStep(a=3, b=4)], name="taken")
-
     def test_re_registering_the_same_graph_is_a_no_op(self, workspace):
         """
         A detached run depends on this: the client registers the run, then the driver job runs
@@ -249,3 +244,156 @@ class TestBucketLayout:
         keys = FakeHfApi.STORE["org/bucket"]
         assert keys, "nothing was written"
         assert all(key.startswith("experiments/") for key in keys)
+
+
+class TestLockIsNotAResult:
+    """
+    The lock `tango-step-<id>-lock` sits next to the result folder `tango-step-<id>/`, and a
+    bucket listing matches by string prefix.
+    """
+
+    def _lock_only(self, workspace, step):
+        workspace.step_starting(step)
+        return workspace.locks.pop(step)  # held, as by a job that died
+
+    def test_a_lock_alone_is_not_a_cached_step(self, workspace, other_machine, s3):
+        step = AddStep(a=1, b=2)
+        lock = self._lock_only(workspace, step)
+        assert s3.objects, "the lock should be in the bucket"
+
+        assert step not in other_machine().step_cache
+        assert len(other_machine().step_cache) == 0
+        lock.release()
+
+    def test_removing_a_step_leaves_a_lock_alone(self, workspace, s3):
+        done = AddStep(a=1, b=2)
+        done.ensure_result(workspace)
+        # A second run has the same step locked while it is being removed here.
+        other = HfBucketWorkspace("org/bucket")
+        lock = other._remote_lock(done)
+        lock.acquire(timeout=5)
+
+        workspace.remove_step(done.unique_id)
+        assert list(s3.objects) == [f"tango-step-{done.unique_id}-lock"]
+        lock.release()
+
+
+class TestStepAbandoned:
+    def _started_by_job(self, monkeypatch, workspace, step, job_id):
+        monkeypatch.setenv("JOB_ID", job_id)
+        workspace.step_starting(step)
+        monkeypatch.delenv("JOB_ID")
+        return workspace.locks.pop(step)
+
+    def test_the_step_is_failed_and_unlocked(self, monkeypatch, workspace, s3):
+        step = AddStep(a=1, b=2)
+        lock = self._started_by_job(monkeypatch, workspace, step, "job-1")
+
+        assert workspace.step_abandoned(step, "job ended in stage CANCELED", "job-1") is True
+        info = workspace.step_info(step)
+        assert info.state == StepState.FAILED
+        assert info.error == "Abandoned: job ended in stage CANCELED"
+        assert s3.objects == {}
+
+        # And the step can simply be run again.
+        assert step.result(workspace) == 3
+        del lock
+
+    def test_a_step_someone_else_is_running_is_left_alone(self, monkeypatch, workspace, s3):
+        import huggingface_hub
+
+        from .fake_hub import FakeJob
+
+        step = AddStep(a=1, b=2)
+        lock = self._started_by_job(monkeypatch, workspace, step, "another-job")
+        monkeypatch.setattr(
+            huggingface_hub, "inspect_job", lambda **kw: FakeJob(kw["job_id"], "RUNNING")
+        )
+
+        assert workspace.step_abandoned(step, "job ended in stage ERROR", "job-1") is False
+        assert workspace.step_info(step).state == StepState.RUNNING
+        assert len(s3.objects) == 1
+        del lock
+
+    def test_a_finished_step_stays_finished(self, workspace):
+        step = AddStep(a=1, b=2)
+        step.ensure_result(workspace)
+        assert workspace.step_abandoned(step, "whatever", "job-1") is True
+        assert workspace.step_info(step).state == StepState.COMPLETED
+
+
+class TestRunNames:
+    def test_the_same_graph_again_is_the_same_run(self, workspace):
+        step = AddStep(a=1, b=2)
+        first = workspace.register_run([step], name="main")
+        again = workspace.register_run([AddStep(a=1, b=2)], name="main")
+        assert again.start_date == first.start_date
+
+    def test_a_changed_graph_updates_the_run(self, workspace, caplog):
+        # Refusing this is why the runs of one experiment were called main, main2 ... main6.
+        kept = AddStep(a=1, b=2, step_name="kept")
+        workspace.register_run(
+            [kept, AddStep(a=3, b=4, step_name="changed"), AddStep(a=5, b=6, step_name="gone")],
+            name="main",
+        )
+        old_id = AddStep(a=3, b=4, step_name="changed").unique_id
+
+        with caplog.at_level("WARNING", logger="tango.integrations.hf.workspace"):
+            run = workspace.register_run(
+                [kept, AddStep(a=3, b=40, step_name="changed"), AddStep(a=7, b=8, step_name="new")],
+                name="main",
+            )
+        # A step the new graph does not mention stays: `tango run -s <step>` registers only
+        # part of the graph, and must not make the run forget the rest.
+        assert set(run.steps) == {"kept", "changed", "new", "gone"}
+        assert set(workspace.registered_run("main").steps) == {"kept", "changed", "new", "gone"}
+        # What changed is said, since a changed identity is a step that gets paid for again.
+        assert "added: new" in caplog.text
+        assert "changed identity: changed" in caplog.text
+
+        import json
+
+        record = json.loads(FakeHfApi.STORE["org/bucket"]["runs/main.json"])
+        # Only what was replaced is kept, not the whole mapping once per relaunch.
+        assert record["history"] == [
+            {
+                "start_date": record["history"][0]["start_date"],
+                "added": ["new"],
+                "replaced": {"changed": old_id},
+            }
+        ]
+        assert workspace.run_step_ids("main") == record["steps"]
+        assert workspace.run_step_ids("no-such-run") is None
+
+
+class TestFlakyConnection:
+    def test_a_dropped_connection_does_not_fail_a_cache_lookup(self, monkeypatch, workspace):
+        # Seen on the first live run of the new executor: one SSL error while listing the
+        # bucket failed a step before it was submitted.
+        from tango.integrations.hf import common
+
+        monkeypatch.setattr(common, "RETRY_BASE_SECONDS", 0.01)
+        step = AddStep(a=1, b=2)
+        step.ensure_result(workspace)
+
+        original = FakeHfApi.list_bucket_tree
+        failures = [ConnectionError("EOF occurred in violation of protocol")] * 2
+
+        def flaky(self, *args, **kwargs):
+            if failures:
+                raise failures.pop()
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(FakeHfApi, "list_bucket_tree", flaky)
+        assert workspace.step_cache._step_result_remote(step) is not None
+        assert failures == []
+
+    def test_running_part_of_a_graph_keeps_the_rest_of_the_run(self, workspace, caplog):
+        first = AddStep(a=1, b=2, step_name="first")
+        second = AddStep(a=3, b=4, step_name="second")
+        workspace.register_run([first, second], name="main")
+
+        with caplog.at_level("WARNING", logger="tango.integrations.hf.workspace"):
+            workspace.register_run([second], name="main")
+        assert "updating" not in caplog.text
+        assert set(workspace.registered_run("main").steps) == {"first", "second"}

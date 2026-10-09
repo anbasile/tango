@@ -122,6 +122,13 @@ class Executor(Registrable):
         self.include_package = include_package
         self.parallelism = parallelism
 
+    def describe_step(self, step: "Step") -> str:
+        """
+        Where and how this executor would run ``step``, in a few words. Shown by
+        ``tango run --dry-run``; an executor that pays for hardware says which and at what price.
+        """
+        return "local"
+
     def execute_step(self, step: "Step") -> None:
         # Import included packages to find registered components.
         if self.include_package is not None:

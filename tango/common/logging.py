@@ -612,7 +612,7 @@ def _initialize_logging(
     # Handle special cases for specific loggers:
     # These loggers emit too many messages, so we tell them to be quiet unless they have something
     # important to say.
-    for loud_logger in {"filelock", "sqlitedict"}:
+    for loud_logger in {"filelock", "sqlitedict", "httpx", "httpcore"}:
         logging.getLogger(loud_logger).setLevel(max(level, logging.WARNING))
     # We always want to see all CLI messages if we're running from the command line, and none otherwise.
     cli_logger.setLevel(logging.DEBUG)

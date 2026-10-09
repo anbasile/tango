@@ -44,7 +44,6 @@ AI2 Tango replaces messy directories and spreadsheets full of file versions by o
 - [Quick start](#quick-start)
 - [Installation](#installation)
   - [Installing with PIP](#installing-with-pip)
-  - [Installing with Conda](#installing-with-conda)
   - [Installing from source](#installing-from-source)
   - [Checking your installation](#checking-your-installation)
   - [Docker image](#docker-image)
@@ -123,16 +122,16 @@ This fork is not on PyPI. Wheels are attached to
 [each GitHub release](https://github.com/anbasile/tango/releases), so install one directly:
 
 ```bash
-pip install https://github.com/anbasile/tango/releases/download/v2.0.0/ai2_tango-2.0.0-py3-none-any.whl
+pip install https://github.com/anbasile/tango/releases/download/v2.2.0/ai2_tango-2.2.0-py3-none-any.whl
 ```
 
 Extras work as usual:
 
 ```bash
-pip install 'ai2_tango[torch] @ https://github.com/anbasile/tango/releases/download/v2.0.0/ai2_tango-2.0.0-py3-none-any.whl'
+pip install 'ai2_tango[torch] @ https://github.com/anbasile/tango/releases/download/v2.2.0/ai2_tango-2.2.0-py3-none-any.whl'
 ```
 
-The available extras are `torch`, `transformers`, `datasets`, `examples` and `all`.
+The available extras are `torch`, `transformers`, `datasets`, `hf`, `examples` and `all`.
 
 ### Installing from source
 

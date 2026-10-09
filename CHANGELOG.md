@@ -7,12 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+Everything here comes from running about 25,000 training runs through the `hf` integration on
+Hugging Face Jobs. Roughly a fifth of what those runs cost was wasted by the problems fixed
+below.
+
+### Fixed
+
+- **A lock file no longer makes a step look cached.** The step cache listed the bucket by string
+  prefix, so the lock `tango-step-<id>-lock` was read as the result folder `tango-step-<id>/`.
+  Any step whose job died holding its lock was skipped as "found in cache" and reported as
+  succeeded, and the first step to need its result failed. Removing a step no longer deletes
+  another run's lock for the same reason.
+- **A job that ends `COMPLETED` is no longer trusted to have produced a result.** The executor
+  checks the bucket and fails the step otherwise, and the job itself now exits non-zero when its
+  command succeeds without a result.
+- **A step whose job died is no longer left "running" and locked.** A job that is cancelled,
+  evicted or killed never writes the end of its step. The executor now records the failure in
+  the step's info and removes the dead job's lock (`HfBucketWorkspace.step_abandoned`,
+  `HfStepLock.break_if_dead`).
+- **Interrupting a run stops its jobs.** Ctrl-C waited for the running jobs to finish before
+  cancelling anything, and a job being submitted at that moment was never cancelled. Each job
+  is now cancelled at once, and its step is left failed and unlocked like that of any other
+  dead job.
+- A job is submitted once. A submission whose connection is lost is not repeated, since the job
+  may exist.
+- **`timeout` is enforced.** The platform let a job with a four-hour timeout run for five and a
+  half. The executor now cancels a job still running a minute past its timeout. `timeout` also
+  accepts a plain number of seconds, which `tango.yml` used to reject.
+- **Polling no longer runs into the Hub's rate limit, and a 429 no longer fails the run.** All
+  jobs of a run are polled with one request per interval instead of one (in practice two) per
+  job, the namespace is looked up once instead of on every call, and rate limits, 5xx responses
+  and dropped connections are waited out (`hub_call`).
+- Every call to the workspace bucket is retried the same way. One dropped connection while
+  checking whether a step was cached failed that step before it was submitted.
+- `inspect_job` and `cancel_job` are given the namespace. Without it they looked under the
+  token's own account, also for jobs run under an organization.
+- **`tango run /some/dir/config.jsonnet` reads that file**, also when the working directory has
+  a `config.jsonnet` of its own. The Jsonnet file was evaluated by its bare name, which is looked
+  up in the working directory first. Jobs of the `hf` executor run from the project directory, so
+  a project with a `config.jsonnet` at its root had every job read that one: a detached run of
+  selected steps (`-s`) ran the whole experiment.
+- **A nested dictionary under `executor:` or `workspace:` in `tango.yml` works**, so `env:` and
+  `secrets:` can be set there. Since Python 3.11 `typing.Any` is a class, and `FromParams` tried
+  to instantiate it ("Any cannot be instantiated").
+- The driver job of a detached run now passes on every executor setting. It used to drop `env`,
+  `secrets` and `project_exclude`, so the jobs of a detached run differed from those of an
+  attached one.
+- The driver job has its own timeout (`driver_timeout`, 24 hours by default). It used to get a
+  single step's.
+- The step lock: `acquired_at` is fixed when the lock is taken (it was rewritten with every
+  heartbeat), releasing waits for a heartbeat in flight so it cannot write the lock back, and a
+  failed delete is a warning, not a debug line that a job never shows.
+- Step jobs log at `info`, so a step's `self.logger` output reaches the job's log. It was lost
+  at the default level.
+- `httpx` and `httpcore` no longer log every request at `info`, which filled a job's log with
+  one line per call to the Hub.
+- `GIT_PYTHON_REFRESH=quiet` is set in every job. The stock images have no `git`, and GitPython
+  then refuses to import, which failed the step before it started.
+
+### Added
+
+- `tango run --dry-run` lists the steps that would run and where (for the `hf` executor: the
+  hardware flavor, its price per hour and the cost at the timeout), and starts nothing. With the
+  name of an existing run it marks the steps that are new or whose identity changed.
+  `--expect PATTERN` fails the command, before anything starts, when a step matching no pattern
+  would run. Executors describe themselves through the new `Executor.describe_step`.
+- `tango run --executor-option KEY=VALUE` overrides one executor setting for one run, e.g.
+  `--executor-option detach=true`.
+- `HfJobsExecutor`:
+  - `attempts`: submit again a step whose job dies without the step itself having failed (a
+    volume that would not mount, an eviction, a job that never starts). A step that raised, ran
+    out of time or was cancelled by hand is not submitted again.
+  - `scheduling_timeout`: cancel a job that does not start in time.
+  - `driver_timeout` and `driver_flavor` for the driver job of a detached run.
+  - `extra_project_exclude`: patterns left out of the project upload in addition to the
+    defaults. `project_exclude` still replaces them.
+  - `secrets_from_env`: pass environment variables on as secrets by name.
+  - Defaults in every job's environment, all overridable through `env`: `TANGO_HF_JOB` and
+    `TANGO_HF_FLAVOR`; `OMP_NUM_THREADS` and `MKL_NUM_THREADS` set to the flavor's vCPU count
+    (PyTorch otherwise starts a thread per core of the host); `HF_HUB_DISABLE_PROGRESS_BARS`
+    and `TQDM_DISABLE`.
+  - A 402 from the Hub (out of credit) stops further submissions with a message that says so;
+    the steps not started are reported as not run.
+- **Job logs are kept.** Every job runs through `python -m tango.integrations.hf.job`, which
+  copies its output to `logs/<step unique id>/<job id>.log` in the workspace bucket every five
+  minutes and at the end, and prints the disk usage at the start and the end.
+- **Job records.** The executor writes `jobs/<run name>/<job id>.json` for every job: step,
+  flavor, price, when it was submitted, started and ended, its final stage and an estimated
+  cost. The Hub reports no running time for cancelled jobs and forgets old jobs.
+
+### Changed
+
+- Registering a run under an existing name with a *changed* graph now updates the run and warns
+  with the steps added and the steps whose identity changed, where it used to fail with "Run
+  name ... is already in use". Steps the new graph does not mention stay in the run, so
+  `tango run -n <name> -s <step>` resumes part of a run without making it forget the rest. The
+  identities that were replaced are kept in the run's record. (`HfBucketWorkspace` only.)
+- A step job's command is wrapped in `python -m tango.integrations.hf.job`, so the Tango
+  installed in the job has to be this version or later.
+
 ## [v2.1.0](https://github.com/anbasile/tango/releases/tag/v2.1.0) - 2026-08-07
 
 ### Added
 
 - **New `hf` integration**, giving Tango remote execution and a shared step cache again, on
-  infrastructure anyone can reach. Install with `pip install ai2-tango[hf]`.
+  infrastructure anyone can reach. Install the `hf` extra from a release wheel (see the README);
+  the fork is not on PyPI.
 - `HfBucketWorkspace` (`Workspace` under `"hf"`) stores step results and run metadata in a
   [Hugging Face Storage Bucket](https://huggingface.co/docs/hub/storage-buckets). Its URL is the
   Hub's own, so `tango run -w hf://buckets/<namespace>/<bucket>` just works. Buckets are mutable

@@ -43,6 +43,9 @@ class Constants(RemoteConstants):
     SETTINGS_FNAME: str = "settings.json"
     UNCOMMITTED_FNAME: str = ".uncommitted"
     RUN_LOG_FNAME: str = "out.log"
+    JOBS_DIR: str = "jobs"
+    LOGS_DIR: str = "logs"
+    DRIVER_LOGS_NAME: str = "_driver"
 
     @classmethod
     def step_info_key(cls, step_or_unique_id: Union[str, Step, StepInfo]) -> str:
@@ -58,6 +61,19 @@ class Constants(RemoteConstants):
     @classmethod
     def run_log_key(cls, name: str) -> str:
         return f"{cls.RUNS_DIR}/{name}.log"
+
+    @classmethod
+    def job_record_key(cls, run_name: Optional[str], job_id: str) -> str:
+        return f"{cls.JOBS_DIR}/{run_name or 'run'}/{job_id}.json"
+
+    @classmethod
+    def job_log_key(cls, owner: str, job_id: str) -> str:
+        """
+        Where a job's output is kept. ``owner`` is a step's unique id, or
+        :attr:`DRIVER_LOGS_NAME` for a driver job. Deliberately outside the step's own artifact
+        folder: anything in there counts as the step's result.
+        """
+        return f"{cls.LOGS_DIR}/{owner}/{job_id}.log"
 
 
 class HfBucketNotFound(TangoError):
@@ -139,7 +155,7 @@ class HfBucketClient:
         self._token = token
 
         if create:
-            self._api.create_bucket(self.bucket_id, exist_ok=True)
+            hub_call(self._api.create_bucket, self.bucket_id, exist_ok=True)
         self._ensure_settings()
 
     @property
@@ -172,9 +188,29 @@ class HfBucketClient:
         List entries under ``prefix``. Returned ``path`` values are keys within the bucket,
         prefix included.
         """
-        return list(
-            self._api.list_bucket_tree(self.bucket_id, prefix=self.key(prefix), recursive=recursive)
+        # Every call to the bucket goes through `hub_call`. They are all safe to repeat, and
+        # one dropped connection while asking "is this step cached" once failed a step before
+        # it was submitted.
+        return hub_call(
+            lambda: list(
+                self._api.list_bucket_tree(
+                    self.bucket_id, prefix=self.key(prefix), recursive=recursive
+                )
+            )
         )
+
+    def ls_dir(self, path: str, recursive: bool = True) -> List[Any]:
+        """
+        List the entries inside the folder ``path``, and only those.
+
+        :meth:`ls` matches by string prefix, so listing ``tango-step-abc`` also returns its
+        sibling ``tango-step-abc-lock``. That is how a lock left by a dead job was once read as
+        the step's result.
+        """
+        folder = self.key(path) + "/"
+        return [
+            entry for entry in self.ls(path, recursive=recursive) if entry.path.startswith(folder)
+        ]
 
     def exists(self, path: str) -> bool:
         full = self.key(path)
@@ -183,7 +219,7 @@ class HfBucketClient:
         return any(item.path == full for item in self.ls(path, recursive=True))
 
     def put_bytes(self, path: str, data: bytes) -> None:
-        self._api.batch_bucket_files(self.bucket_id, add=[(data, self.key(path))])
+        hub_call(self._api.batch_bucket_files, self.bucket_id, add=[(data, self.key(path))])
 
     def get_bytes(self, path: str) -> bytes:
         """
@@ -200,8 +236,10 @@ class HfBucketClient:
                     warnings.filterwarnings(
                         "ignore", message=r"File .* not found in bucket", category=UserWarning
                     )
-                    self._api.download_bucket_files(
-                        self.bucket_id, files=[(self.key(path), str(local))]
+                    hub_call(
+                        self._api.download_bucket_files,
+                        self.bucket_id,
+                        files=[(self.key(path), str(local))],
                     )
             except Exception as exc:
                 if _is_not_found(exc):
@@ -220,20 +258,32 @@ class HfBucketClient:
         return json.loads(self.get_bytes(path).decode("utf-8"))
 
     def upload_dir(self, path: str, local_dir: PathOrStr) -> None:
-        self._api.sync_bucket(str(local_dir), f"hf://buckets/{self.bucket_id}/{self.key(path)}")
+        hub_call(
+            self._api.sync_bucket, str(local_dir), f"hf://buckets/{self.bucket_id}/{self.key(path)}"
+        )
 
     def download_dir(self, path: str, local_dir: PathOrStr) -> None:
-        self._api.sync_bucket(f"hf://buckets/{self.bucket_id}/{self.key(path)}", str(local_dir))
+        hub_call(
+            self._api.sync_bucket, f"hf://buckets/{self.bucket_id}/{self.key(path)}", str(local_dir)
+        )
 
     def delete(self, *paths: str) -> None:
         keys = [self.key(path) for path in paths]
         if keys:
-            self._api.batch_bucket_files(self.bucket_id, delete=keys)
+            hub_call(self._api.batch_bucket_files, self.bucket_id, delete=keys)
+
+    def delete_dir(self, path: str) -> None:
+        """
+        Delete every object inside the folder ``path``, and nothing beside it.
+        """
+        keys = [item.path for item in self.ls_dir(path, recursive=True) if item.type == "file"]
+        if keys:
+            hub_call(self._api.batch_bucket_files, self.bucket_id, delete=keys)
 
     def delete_prefix(self, prefix: str) -> None:
         keys = [item.path for item in self.ls(prefix, recursive=True) if item.type == "file"]
         if keys:
-            self._api.batch_bucket_files(self.bucket_id, delete=keys)
+            hub_call(self._api.batch_bucket_files, self.bucket_id, delete=keys)
 
 
 #
@@ -285,6 +335,54 @@ FLAVORS: Tuple[Flavor, ...] = (
     Flavor("l40sx8", 192, 1534, 8, "L40S", 23.50),
     Flavor("h200x8", 184, 2048, 8, "H200", 40.00),
 )
+
+
+def flavor_info(name: str) -> Optional[Flavor]:
+    """
+    The table entry for a flavor name, or ``None`` for one this table doesn't know.
+    """
+    return next((flavor for flavor in FLAVORS if flavor.name == name), None)
+
+
+_TIMEOUT_UNITS: Dict[str, float] = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def parse_timeout(value: Union[int, float, str]) -> int:
+    """
+    Parse a job timeout into seconds, by the rule the Hub applies to ``run_job(timeout=...)``:
+    a number is seconds, and a string may end in ``s``, ``m``, ``h`` or ``d``.
+
+    :examples:
+
+    .. testcode::
+
+        from tango.integrations.hf.common import parse_timeout
+
+        print(parse_timeout("4h"), parse_timeout("1.5m"), parse_timeout(90), parse_timeout("30"))
+
+    .. testoutput::
+
+        14400 90 90 30
+    """
+    if isinstance(value, bool):
+        raise ConfigurationError(f"Could not parse '{value}' as a timeout.")
+    if isinstance(value, (int, float)):
+        seconds = float(value)
+    else:
+        match = re.fullmatch(r"\s*([0-9.]+)\s*([smhd]?)\s*", str(value).lower())
+        if match is None:
+            raise ConfigurationError(
+                f"Could not parse '{value}' as a timeout. Use seconds, or a number followed by "
+                f"s, m, h or d, e.g. '4h'."
+            )
+        try:
+            seconds = float(match.group(1)) * _TIMEOUT_UNITS[match.group(2) or "s"]
+        except ValueError:
+            raise ConfigurationError(f"Could not parse '{value}' as a timeout.")
+    if seconds <= 0:
+        raise ConfigurationError(f"A timeout has to be positive, got '{value}'.")
+    return int(seconds)
+
 
 _MEMORY_UNITS: Dict[str, float] = {
     "": 1 / 1024**3,
@@ -403,8 +501,131 @@ def resolve_flavor(
 # Locking.
 #
 
+#: Set by the executor in every Job: the namespace the Job runs under.
+JOB_NAMESPACE_ENV_VAR = "TANGO_HF_NAMESPACE"
+
 #: Job stages that mean the job is over, whatever the outcome.
 TERMINAL_JOB_STAGES = frozenset({"COMPLETED", "ERROR", "CANCELED", "DELETED"})
+
+
+def job_stage(job: Any) -> str:
+    """
+    The stage of a job as a plain string such as ``"RUNNING"``.
+
+    The Hub hands the stage back as the raw string today, but annotates it as an enum, whose
+    ``str()`` would be ``"JobStage.RUNNING"``. Reading ``.value`` when there is one keeps the
+    comparisons right either way.
+    """
+    stage = getattr(getattr(job, "status", None), "stage", None)
+    if stage is None:
+        return ""
+    return str(getattr(stage, "value", stage)).upper()
+
+
+#
+# Calling the Hub.
+#
+
+#: HTTP statuses worth waiting out: the rate limit, and the Hub having a bad moment.
+TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
+
+#: First wait between attempts of :func:`hub_call`, doubled each time up to the cap.
+RETRY_BASE_SECONDS = 2.0
+RETRY_CAP_SECONDS = 60.0
+#: How long :func:`hub_call` keeps trying before it gives up and raises.
+RETRY_BUDGET_SECONDS = 600.0
+
+
+def http_status(exc: BaseException) -> Optional[int]:
+    """
+    The HTTP status carried by an exception from ``huggingface_hub``, if any.
+    """
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return status if isinstance(status, int) else None
+
+
+def _is_transient(exc: BaseException, statuses: frozenset, connection_errors: bool = True) -> bool:
+    status = http_status(exc)
+    if status is not None:
+        return status in statuses
+    if not connection_errors:
+        return False
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    try:
+        import httpx
+
+        return isinstance(exc, httpx.TransportError)
+    except ImportError:  # pragma: no cover - huggingface_hub depends on httpx
+        return False
+
+
+def _retry_after(exc: BaseException) -> Optional[float]:
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    try:
+        return float(headers["Retry-After"]) if headers and "Retry-After" in headers else None
+    except (TypeError, ValueError):
+        return None
+
+
+#: The time by which the :func:`hub_call` in progress on this thread has to give up.
+_deadline = threading.local()
+
+
+def hub_call(
+    function: Any,
+    *args: Any,
+    statuses: frozenset = TRANSIENT_STATUSES,
+    connection_errors: bool = True,
+    budget: Optional[float] = None,
+    stop: Optional[threading.Event] = None,
+    **kwargs: Any,
+) -> Any:
+    """
+    Call a ``huggingface_hub`` function, waiting out rate limits and transient failures.
+
+    The Hub allows 1,000 API requests per five minutes. Without this, one 429 while polling
+    failed a whole run and left its jobs running with nobody watching them.
+
+    :param statuses: The HTTP statuses to retry.
+    :param connection_errors: Whether to retry when the connection fails or times out. Turn
+        it off for a call that must not be made twice: a request whose answer was lost may
+        have been carried out.
+    :param budget: Seconds to keep trying. Defaults to :data:`RETRY_BUDGET_SECONDS`. It also
+        bounds the calls ``function`` makes through :func:`hub_call` itself, which would
+        otherwise each keep trying for their own budget.
+    :param stop: Set to give up early; the last error is raised.
+    """
+    budget = RETRY_BUDGET_SECONDS if budget is None else budget
+    outer: Optional[float] = getattr(_deadline, "value", None)
+    deadline = time.monotonic() + budget
+    if outer is not None:
+        deadline = min(deadline, outer)
+    delay = RETRY_BASE_SECONDS
+    _deadline.value = deadline
+    try:
+        while True:
+            try:
+                return function(*args, **kwargs)
+            except Exception as exc:
+                if not _is_transient(exc, statuses, connection_errors):
+                    raise
+                wait = max(delay, _retry_after(exc) or 0.0)
+                if time.monotonic() + wait > deadline or (stop is not None and stop.is_set()):
+                    raise
+                logger.warning(
+                    "%s failed (%s); trying again in %.0f s.",
+                    getattr(function, "__name__", "Hub call"),
+                    http_status(exc) or type(exc).__name__,
+                    wait,
+                )
+                if stop is not None:
+                    stop.wait(wait)
+                else:
+                    time.sleep(wait)
+                delay = min(delay * 2, RETRY_CAP_SECONDS)
+    finally:
+        _deadline.value = outer
 
 
 def get_s3_client(
@@ -483,6 +704,7 @@ class HfStepLock:
         self._ttl = ttl
         self._heartbeat_interval = heartbeat_interval
         self._held = False
+        self._acquired_at: Optional[str] = None
         self._stop_heartbeat = threading.Event()
         self._heartbeat_thread: Optional[threading.Thread] = None
         self.lock_url = client.url(Constants.step_lock_artifact_name(step))
@@ -494,9 +716,13 @@ class HfStepLock:
                 # Set inside a Job container, absent locally. Which one it is decides how a
                 # stale lock gets detected.
                 "job_id": os.environ.get("JOB_ID"),
+                # The namespace the Job runs under, which the Jobs API needs to find it. Set
+                # by the executor; absent for a local holder.
+                "namespace": os.environ.get(JOB_NAMESPACE_ENV_VAR),
                 "host": socket.gethostname(),
                 "pid": os.getpid(),
-                "acquired_at": utc_now_datetime().isoformat(),
+                # Fixed at acquisition. Only `heartbeat` moves afterwards.
+                "acquired_at": self._acquired_at or utc_now_datetime().isoformat(),
                 "heartbeat": time.time(),
             }
         ).encode("utf-8")
@@ -519,12 +745,16 @@ class HfStepLock:
             try:
                 from huggingface_hub import inspect_job
 
-                job = inspect_job(job_id=job_id, token=self._client.token)
+                # Without a namespace the Hub looks the job up under the token's own account,
+                # at the price of a `whoami` request, and misses a Job run under an
+                # organization.
+                job = inspect_job(
+                    job_id=job_id, namespace=holder.get("namespace"), token=self._client.token
+                )
             except Exception:
                 logger.debug("Could not inspect job %s holding the lock.", job_id, exc_info=True)
                 return False
-            stage = getattr(getattr(job, "status", None), "stage", None)
-            return str(stage) in TERMINAL_JOB_STAGES
+            return job_stage(job) in TERMINAL_JOB_STAGES
 
         heartbeat = holder.get("heartbeat")
         if not isinstance(heartbeat, (int, float)):
@@ -555,9 +785,10 @@ class HfStepLock:
         start = time.monotonic()
         last_logged: Optional[float] = None
         while timeout is None or (time.monotonic() - start < timeout):
+            payload = self._payload()
             try:
                 self._s3.put_object(
-                    Bucket=self._bucket, Key=self._key, Body=self._payload(), IfNoneMatch="*"
+                    Bucket=self._bucket, Key=self._key, Body=payload, IfNoneMatch="*"
                 )
             except Exception as exc:
                 if not _is_precondition_failed(exc):
@@ -570,7 +801,7 @@ class HfStepLock:
                         self._step_id,
                         (holder or {}).get("job_id") or (holder or {}).get("host"),
                     )
-                    self._force_release()
+                    self._force_release(expected=holder)
                     continue
 
                 if last_logged is None or time.monotonic() - last_logged >= log_interval:
@@ -584,6 +815,7 @@ class HfStepLock:
                 time.sleep(poll_interval)
             else:
                 self._held = True
+                self._acquired_at = json.loads(payload.decode("utf-8"))["acquired_at"]
                 atexit.register(self.release)
                 # A Job's liveness is settled by the Jobs API, so only a local holder needs to
                 # prove it is still alive.
@@ -603,19 +835,68 @@ class HfStepLock:
             f"delete the lock object above."
         )
 
-    def _force_release(self) -> None:
+    def _force_release(self, expected: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        Delete the lock object. With ``expected``, only if the record still names that holder:
+        between judging a holder dead and deleting, another run may have broken the lock and
+        taken it, and its lock must not be the one removed.
+        """
+        if expected is not None:
+            current = self._read_holder()
+            if current is None:
+                return True
+            if any(
+                current.get(k) != expected.get(k) for k in ("job_id", "host", "pid", "acquired_at")
+            ):
+                return False
         try:
             self._s3.delete_object(Bucket=self._bucket, Key=self._key)
-        except Exception:  # pragma: no cover - best effort
-            logger.debug("Failed to delete the lock for '%s'.", self._step_id, exc_info=True)
+            return True
+        except Exception:
+            # Not at DEBUG: a lock that stays behind blocks the step for every later run, and
+            # inside a Job nothing below WARNING is visible.
+            logger.warning(
+                "Failed to delete the lock for '%s' (%s).",
+                self._step_id,
+                self.lock_url,
+                exc_info=True,
+            )
+            return False
+
+    def holder(self) -> Optional[Dict[str, Any]]:
+        """
+        The record of whoever holds the lock, or ``None`` when nobody does.
+        """
+        return self._read_holder()
+
+    def break_if_dead(self, job_id: Optional[str] = None) -> bool:
+        """
+        Remove the lock when its holder is gone, and say whether the step is now free.
+
+        A Job that is cancelled, evicted or killed at its timeout never runs its own release,
+        so the executor calls this once it has seen the Job end. With ``job_id``, a lock held
+        by that Job is removed without asking the Jobs API again.
+
+        :returns: ``False`` when a holder that still looks alive keeps the lock.
+        """
+        holder = self._read_holder()
+        if holder is None:
+            return True
+        if (job_id is not None and holder.get("job_id") == job_id) or self._holder_is_dead(holder):
+            return self._force_release(expected=holder)
+        return False
 
     def release(self) -> None:
         if not self._held:
             return
         self._stop_heartbeat.set()
-        self._heartbeat_thread = None
+        thread, self._heartbeat_thread = self._heartbeat_thread, None
+        if thread is not None and thread is not threading.current_thread():
+            # Wait for a refresh in flight, or it would write the lock back after the delete.
+            thread.join(timeout=10.0)
         self._force_release()
         self._held = False
+        self._acquired_at = None
         atexit.unregister(self.release)
 
     def __del__(self) -> None:

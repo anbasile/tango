@@ -143,3 +143,107 @@ class TestHfStepLock:
         other = HfStepLock(client, "step123", s3_client=s3)
         with pytest.raises(TimeoutError):
             other.acquire(timeout=1, poll_interval=0.05)
+
+    def test_acquired_at_stays_put_while_the_heartbeat_moves(self, client, s3):
+        # Both used to be rewritten together on every beat, so the record could not say how
+        # long a lock had been held.
+        lock = HfStepLock(client, "step123", s3_client=s3, heartbeat_interval=0.05)
+        lock.acquire(timeout=5)
+        first = _holder(s3)
+        deadline = time.time() + 5
+        while _holder(s3)["heartbeat"] == first["heartbeat"] and time.time() < deadline:
+            time.sleep(0.02)
+        later = _holder(s3)
+        assert later["heartbeat"] > first["heartbeat"]
+        assert later["acquired_at"] == first["acquired_at"]
+        lock.release()
+
+    def test_no_heartbeat_writes_the_lock_back_after_release(self, client, s3):
+        lock = HfStepLock(client, "step123", s3_client=s3, heartbeat_interval=0.01)
+        lock.acquire(timeout=5)
+        time.sleep(0.05)
+        lock.release()
+        time.sleep(0.05)
+        assert LOCK_KEY not in s3.objects
+
+    def test_a_failed_delete_is_not_silent(self, client, s3, caplog):
+        # Inside a Job only warnings and above are visible, and a lock that stays behind
+        # blocks the step for every later run.
+        lock = HfStepLock(client, "step123", s3_client=s3)
+        lock.acquire(timeout=5)
+        s3.fail_deletes = True
+        with caplog.at_level("WARNING", logger="tango.integrations.hf.common"):
+            lock.release()
+        assert "Failed to delete the lock" in caplog.text
+        s3.fail_deletes = False
+
+    def test_the_job_is_looked_up_in_its_own_namespace(self, client, s3, monkeypatch):
+        from tango.integrations.hf.common import JOB_NAMESPACE_ENV_VAR
+
+        monkeypatch.setenv("JOB_ID", "job-abc")
+        monkeypatch.setenv(JOB_NAMESPACE_ENV_VAR, "my-org")
+        dead = HfStepLock(client, "step123", s3_client=s3)
+        dead.acquire(timeout=5)
+        monkeypatch.delenv("JOB_ID")
+        monkeypatch.delenv(JOB_NAMESPACE_ENV_VAR)
+
+        import huggingface_hub
+
+        asked = []
+
+        def inspect_job(**kwargs):
+            asked.append(kwargs)
+            return FakeJob(kwargs["job_id"], "CANCELED")
+
+        monkeypatch.setattr(huggingface_hub, "inspect_job", inspect_job)
+        live = HfStepLock(client, "step123", s3_client=s3)
+        live.acquire(timeout=5, poll_interval=0.05)
+        assert asked[0]["namespace"] == "my-org"
+        live.release()
+
+
+class TestBreakIfDead:
+    def _held_by_job(self, client, s3, monkeypatch, job_id="job-abc"):
+        monkeypatch.setenv("JOB_ID", job_id)
+        lock = HfStepLock(client, "step123", s3_client=s3)
+        lock.acquire(timeout=5)
+        monkeypatch.delenv("JOB_ID")
+        return lock
+
+    def test_no_lock_means_free(self, client, s3):
+        assert HfStepLock(client, "step123", s3_client=s3).break_if_dead() is True
+
+    def test_the_named_job_loses_its_lock_without_asking(self, client, s3, monkeypatch):
+        holder = self._held_by_job(client, s3, monkeypatch)
+        import huggingface_hub
+
+        def explode(**kwargs):
+            raise AssertionError("the caller has already seen this job end")
+
+        monkeypatch.setattr(huggingface_hub, "inspect_job", explode)
+        assert HfStepLock(client, "step123", s3_client=s3).break_if_dead("job-abc") is True
+        assert LOCK_KEY not in s3.objects
+        del holder
+
+    def test_another_live_holder_keeps_the_lock(self, client, s3, monkeypatch):
+        holder = self._held_by_job(client, s3, monkeypatch, job_id="someone-else")
+        import huggingface_hub
+
+        monkeypatch.setattr(
+            huggingface_hub, "inspect_job", lambda **kw: FakeJob(kw["job_id"], "RUNNING")
+        )
+        assert HfStepLock(client, "step123", s3_client=s3).break_if_dead("job-abc") is False
+        assert LOCK_KEY in s3.objects
+        del holder
+
+    def test_a_lock_taken_over_in_between_is_left_alone(self, client, s3, monkeypatch):
+        # Between judging a holder dead and deleting, another run may have taken the lock.
+        holder = self._held_by_job(client, s3, monkeypatch)
+        lock = HfStepLock(client, "step123", s3_client=s3)
+        judged_dead = lock.holder()
+        newcomer = dict(judged_dead, job_id="job-new", acquired_at="2030-01-01T00:00:00+00:00")
+        s3.objects[LOCK_KEY] = json.dumps(newcomer).encode("utf-8")
+
+        assert lock._force_release(expected=judged_dead) is False
+        assert _holder(s3)["job_id"] == "job-new"
+        del holder

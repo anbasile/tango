@@ -244,3 +244,23 @@ class TestParams(TangoTestCase):
         remove_keys_from_params(params, keys=["activation"])
         assert "activation" not in params["model"]["layers"][0]
         assert "activation" not in params["model"]["layers"][1]
+
+
+def test_from_file_reads_the_file_it_is_given_not_its_namesake_in_the_cwd(tmp_path, monkeypatch):
+    # A job of the Hugging Face executor runs `tango run /tango/config/config.jsonnet` from the
+    # project directory. With a `config.jsonnet` there too, that one was read instead: the
+    # driver of a detached run ran the whole experiment where a part had been asked for.
+    here = tmp_path / "here"
+    there = tmp_path / "there"
+    here.mkdir()
+    there.mkdir()
+    (here / "config.jsonnet").write_text('{ which: "the one in the working directory" }')
+    (there / "lib.libsonnet").write_text('{ which: "the one asked for" }')
+    (there / "config.jsonnet").write_text('local lib = import "lib.libsonnet"; lib')
+
+    monkeypatch.chdir(here)
+    assert Params.from_file(there / "config.jsonnet").as_dict() == {"which": "the one asked for"}
+    # A relative path still means relative to the working directory.
+    assert Params.from_file("config.jsonnet").as_dict() == {
+        "which": "the one in the working directory"
+    }

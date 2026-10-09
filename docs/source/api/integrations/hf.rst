@@ -47,4 +47,13 @@ Utilities
 
 .. autofunction:: tango.integrations.hf.common.parse_memory
 
+.. autofunction:: tango.integrations.hf.common.parse_timeout
+
+.. autofunction:: tango.integrations.hf.common.hub_call
+
+The job entry point
+~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: tango.integrations.hf.job
+
 .. autofunction:: tango.integrations.hf.common.split_bucket_path

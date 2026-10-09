@@ -651,6 +651,15 @@ def construct_arg(
 
         return value_list
 
+    elif annotation is Any:
+        # Nothing to construct: `Any` says the value is taken as it comes. Since Python 3.11
+        # `typing.Any` is a class, so without this branch a nested dictionary fell into the
+        # one below and failed with "Any cannot be instantiated". That is why a `tango.yml`
+        # could not have an `env:` block under `executor:`.
+        if isinstance(popped_params, Params):
+            return popped_params.as_dict()
+        return popped_params
+
     elif (inspect.isclass(annotation) or inspect.isclass(origin)) and isinstance(
         popped_params, Params
     ):

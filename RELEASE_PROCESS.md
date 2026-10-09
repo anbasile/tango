@@ -29,7 +29,9 @@ wheel and sdist attached. This fork is not published to PyPI or conda-forge.
 ## Installing a release
 
 ```bash
-pip install https://github.com/anbasile/tango/releases/download/v2.0.0/ai2_tango-2.0.0-py3-none-any.whl
+pip install https://github.com/anbasile/tango/releases/download/v2.2.0/ai2_tango-2.2.0-py3-none-any.whl
+# with an extra:
+pip install 'ai2_tango[hf] @ https://github.com/anbasile/tango/releases/download/v2.2.0/ai2_tango-2.2.0-py3-none-any.whl'
 ```
 
 ## Fixing a failed release
