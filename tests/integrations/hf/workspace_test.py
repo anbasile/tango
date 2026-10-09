@@ -292,7 +292,7 @@ class TestStepAbandoned:
         assert workspace.step_abandoned(step, "job ended in stage CANCELED", "job-1") is True
         info = workspace.step_info(step)
         assert info.state == StepState.FAILED
-        assert info.error == "job ended in stage CANCELED"
+        assert info.error == "Abandoned: job ended in stage CANCELED"
         assert s3.objects == {}
 
         # And the step can simply be run again.
@@ -343,11 +343,12 @@ class TestRunNames:
                 [kept, AddStep(a=3, b=40, step_name="changed"), AddStep(a=7, b=8, step_name="new")],
                 name="main",
             )
-        assert set(run.steps) == {"kept", "changed", "new"}
-        assert set(workspace.registered_run("main").steps) == {"kept", "changed", "new"}
+        # A step the new graph does not mention stays: `tango run -s <step>` registers only
+        # part of the graph, and must not make the run forget the rest.
+        assert set(run.steps) == {"kept", "changed", "new", "gone"}
+        assert set(workspace.registered_run("main").steps) == {"kept", "changed", "new", "gone"}
         # What changed is said, since a changed identity is a step that gets paid for again.
         assert "added: new" in caplog.text
-        assert "removed: gone" in caplog.text
         assert "changed identity: changed" in caplog.text
 
         import json
@@ -356,3 +357,36 @@ class TestRunNames:
         assert record["history"][0]["steps"]["changed"] == old_id
         assert workspace.run_step_ids("main") == record["steps"]
         assert workspace.run_step_ids("no-such-run") is None
+
+
+class TestFlakyConnection:
+    def test_a_dropped_connection_does_not_fail_a_cache_lookup(self, monkeypatch, workspace):
+        # Seen on the first live run of the new executor: one SSL error while listing the
+        # bucket failed a step before it was submitted.
+        from tango.integrations.hf import common
+
+        monkeypatch.setattr(common, "RETRY_BASE_SECONDS", 0.01)
+        step = AddStep(a=1, b=2)
+        step.ensure_result(workspace)
+
+        original = FakeHfApi.list_bucket_tree
+        failures = [ConnectionError("EOF occurred in violation of protocol")] * 2
+
+        def flaky(self, *args, **kwargs):
+            if failures:
+                raise failures.pop()
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(FakeHfApi, "list_bucket_tree", flaky)
+        assert workspace.step_cache._step_result_remote(step) is not None
+        assert failures == []
+
+    def test_running_part_of_a_graph_keeps_the_rest_of_the_run(self, workspace, caplog):
+        first = AddStep(a=1, b=2, step_name="first")
+        second = AddStep(a=3, b=4, step_name="second")
+        workspace.register_run([first, second], name="main")
+
+        with caplog.at_level("WARNING", logger="tango.integrations.hf.workspace"):
+            workspace.register_run([second], name="main")
+        assert "updating" not in caplog.text
+        assert set(workspace.registered_run("main").steps) == {"first", "second"}

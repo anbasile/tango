@@ -32,8 +32,15 @@ below.
   jobs of a run are polled with one request per interval instead of one (in practice two) per
   job, the namespace is looked up once instead of on every call, and rate limits, 5xx responses
   and dropped connections are waited out (`hub_call`).
+- Every call to the workspace bucket is retried the same way. One dropped connection while
+  checking whether a step was cached failed that step before it was submitted.
 - `inspect_job` and `cancel_job` are given the namespace. Without it they looked under the
   token's own account, also for jobs run under an organization.
+- **`tango run /some/dir/config.jsonnet` reads that file**, also when the working directory has
+  a `config.jsonnet` of its own. The Jsonnet file was evaluated by its bare name, which is looked
+  up in the working directory first. Jobs of the `hf` executor run from the project directory, so
+  a project with a `config.jsonnet` at its root had every job read that one: a detached run of
+  selected steps (`-s`) ran the whole experiment.
 - **A nested dictionary under `executor:` or `workspace:` in `tango.yml` works**, so `env:` and
   `secrets:` can be set there. Since Python 3.11 `typing.Any` is a class, and `FromParams` tried
   to instantiate it ("Any cannot be instantiated").
@@ -47,6 +54,8 @@ below.
   failed delete is a warning, not a debug line that a job never shows.
 - Step jobs log at `info`, so a step's `self.logger` output reaches the job's log. It was lost
   at the default level.
+- `httpx` and `httpcore` no longer log every request at `info`, which filled a job's log with
+  one line per call to the Hub.
 - `GIT_PYTHON_REFRESH=quiet` is set in every job. The stock images have no `git`, and GitPython
   then refuses to import, which failed the step before it started.
 
@@ -84,8 +93,10 @@ below.
 ### Changed
 
 - Registering a run under an existing name with a *changed* graph now updates the run and warns
-  with the steps added, removed and changed, where it used to fail with "Run name ... is already
-  in use". The earlier step mapping is kept in the run's record. (`HfBucketWorkspace` only.)
+  with the steps added and the steps whose identity changed, where it used to fail with "Run
+  name ... is already in use". Steps the new graph does not mention stay in the run, so
+  `tango run -n <name> -s <step>` resumes part of a run without making it forget the rest. The
+  earlier step mapping is kept in the run's record. (`HfBucketWorkspace` only.)
 - A step job's command is wrapped in `python -m tango.integrations.hf.job`, so the Tango
   installed in the job has to be this version or later.
 

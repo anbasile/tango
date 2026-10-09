@@ -503,7 +503,8 @@ class HfJobsExecutor(Executor):
         prefix = f"{Constants.PROJECT_DIR}/{digest}"
 
         cli_logger.info("[blue]Syncing %s to the workspace bucket...[/]", self.project_dir)
-        self._client.api.sync_bucket(
+        hub_call(
+            self._client.api.sync_bucket,
             str(self.project_dir),
             f"hf://buckets/{self._client.bucket_id}/{self._client.key(prefix)}",
             exclude=self.project_exclude,
@@ -603,7 +604,8 @@ class HfJobsExecutor(Executor):
         if info is None:
             return f"job on {flavor}"
         ceiling = info.cost_per_hour * self.timeout_seconds / 3600
-        return f"job on {flavor}, ${info.cost_per_hour:.2f}/h, at most ${ceiling:.2f}"
+        at_most = f"at most ${ceiling:.2f}" if ceiling >= 0.01 else "under $0.01"
+        return f"job on {flavor}, ${info.cost_per_hour:.2f}/h, {at_most}"
 
     def _submit(self, step: Step, context: _RunContext) -> Any:
         from huggingface_hub import run_job
@@ -773,6 +775,9 @@ class HfJobsExecutor(Executor):
             return None
         # Two minutes of slack for the clocks of this machine and the container.
         if step_info.end_time < since - timedelta(minutes=2):
+            return None
+        if (step_info.error or "").startswith(self.workspace.ABANDONED_PREFIX):  # type: ignore[attr-defined]
+            # Written by an executor (another one watching the same job), not by the step.
             return None
         lines = [line for line in (step_info.error or "").strip().splitlines() if line.strip()]
         return lines[-1].strip() if lines else "the step raised"

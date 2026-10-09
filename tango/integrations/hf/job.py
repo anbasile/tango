@@ -38,6 +38,10 @@ DEFAULT_LOG_UPLOAD_INTERVAL = 300.0
 #: The exit code of a job whose command succeeded without producing the step's result.
 NO_RESULT_EXIT_CODE = 3
 
+#: Seconds an upload of the log keeps trying when the Hub does not answer. Short on purpose:
+#: the next upload carries everything again, and the step must not wait on its log.
+LOG_RETRY_BUDGET = 30.0
+
 #: Only the end of a very long log is kept.
 MAX_LOG_BYTES = 20 * 1024 * 1024
 
@@ -95,7 +99,15 @@ class _LogUploader:
                     if size > MAX_LOG_BYTES:
                         log.seek(size - MAX_LOG_BYTES)
                     data = log.read()
-                self.client.put_bytes(self._key, data)
+                from .common import hub_call
+
+                client = self.client
+                hub_call(
+                    client.api.batch_bucket_files,
+                    client.bucket_id,
+                    add=[(data, client.key(self._key))],
+                    budget=LOG_RETRY_BUDGET,
+                )
                 self._uploaded_size = size
             except Exception as exc:
                 _say(f"could not upload the log: {type(exc).__name__}: {exc}")

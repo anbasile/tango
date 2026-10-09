@@ -155,7 +155,7 @@ class HfBucketClient:
         self._token = token
 
         if create:
-            self._api.create_bucket(self.bucket_id, exist_ok=True)
+            hub_call(self._api.create_bucket, self.bucket_id, exist_ok=True)
         self._ensure_settings()
 
     @property
@@ -188,8 +188,15 @@ class HfBucketClient:
         List entries under ``prefix``. Returned ``path`` values are keys within the bucket,
         prefix included.
         """
-        return list(
-            self._api.list_bucket_tree(self.bucket_id, prefix=self.key(prefix), recursive=recursive)
+        # Every call to the bucket goes through `hub_call`. They are all safe to repeat, and
+        # one dropped connection while asking "is this step cached" once failed a step before
+        # it was submitted.
+        return hub_call(
+            lambda: list(
+                self._api.list_bucket_tree(
+                    self.bucket_id, prefix=self.key(prefix), recursive=recursive
+                )
+            )
         )
 
     def ls_dir(self, path: str, recursive: bool = True) -> List[Any]:
@@ -212,7 +219,7 @@ class HfBucketClient:
         return any(item.path == full for item in self.ls(path, recursive=True))
 
     def put_bytes(self, path: str, data: bytes) -> None:
-        self._api.batch_bucket_files(self.bucket_id, add=[(data, self.key(path))])
+        hub_call(self._api.batch_bucket_files, self.bucket_id, add=[(data, self.key(path))])
 
     def get_bytes(self, path: str) -> bytes:
         """
@@ -229,8 +236,10 @@ class HfBucketClient:
                     warnings.filterwarnings(
                         "ignore", message=r"File .* not found in bucket", category=UserWarning
                     )
-                    self._api.download_bucket_files(
-                        self.bucket_id, files=[(self.key(path), str(local))]
+                    hub_call(
+                        self._api.download_bucket_files,
+                        self.bucket_id,
+                        files=[(self.key(path), str(local))],
                     )
             except Exception as exc:
                 if _is_not_found(exc):
@@ -249,15 +258,19 @@ class HfBucketClient:
         return json.loads(self.get_bytes(path).decode("utf-8"))
 
     def upload_dir(self, path: str, local_dir: PathOrStr) -> None:
-        self._api.sync_bucket(str(local_dir), f"hf://buckets/{self.bucket_id}/{self.key(path)}")
+        hub_call(
+            self._api.sync_bucket, str(local_dir), f"hf://buckets/{self.bucket_id}/{self.key(path)}"
+        )
 
     def download_dir(self, path: str, local_dir: PathOrStr) -> None:
-        self._api.sync_bucket(f"hf://buckets/{self.bucket_id}/{self.key(path)}", str(local_dir))
+        hub_call(
+            self._api.sync_bucket, f"hf://buckets/{self.bucket_id}/{self.key(path)}", str(local_dir)
+        )
 
     def delete(self, *paths: str) -> None:
         keys = [self.key(path) for path in paths]
         if keys:
-            self._api.batch_bucket_files(self.bucket_id, delete=keys)
+            hub_call(self._api.batch_bucket_files, self.bucket_id, delete=keys)
 
     def delete_dir(self, path: str) -> None:
         """
@@ -265,12 +278,12 @@ class HfBucketClient:
         """
         keys = [item.path for item in self.ls_dir(path, recursive=True) if item.type == "file"]
         if keys:
-            self._api.batch_bucket_files(self.bucket_id, delete=keys)
+            hub_call(self._api.batch_bucket_files, self.bucket_id, delete=keys)
 
     def delete_prefix(self, prefix: str) -> None:
         keys = [item.path for item in self.ls(prefix, recursive=True) if item.type == "file"]
         if keys:
-            self._api.batch_bucket_files(self.bucket_id, delete=keys)
+            hub_call(self._api.batch_bucket_files, self.bucket_id, delete=keys)
 
 
 #

@@ -493,7 +493,13 @@ class Params(MutableMapping):
         else:
             # Fall back to JSON/Jsonnet.
             ext_vars = {**_environment_variables(), **ext_vars}
-            json_str = evaluate_file(params_file.name, str(params_file.parent), ext_vars=ext_vars)
+            # The full path, not the bare name: a bare name is looked up in the working
+            # directory before `jpathdir`, so `tango run /some/dir/config.jsonnet` silently
+            # read `./config.jsonnet` when there was one. Imports are still resolved next to
+            # the file.
+            json_str = evaluate_file(
+                str(params_file.resolve()), str(params_file.resolve().parent), ext_vars=ext_vars
+            )
             file_dict = json.loads(json_str)
 
         if isinstance(params_overrides, dict):

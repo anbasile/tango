@@ -62,6 +62,9 @@ class HfBucketWorkspace(RemoteWorkspace):
 
     Constants = Constants
     NUM_CONCURRENT_WORKERS: int = 16
+    #: Starts the error of a step that :meth:`step_abandoned` failed, which tells it apart from
+    #: an error the step raised itself.
+    ABANDONED_PREFIX: str = "Abandoned: "
 
     def __init__(
         self,
@@ -162,7 +165,7 @@ class HfBucketWorkspace(RemoteWorkspace):
         step_info = self.step_info(step)
         if step_info.state == StepState.RUNNING:
             step_info.end_time = utc_now_datetime()
-            step_info.error = error
+            step_info.error = f"{self.ABANDONED_PREFIX}{error}"
             self._update_step_info(step_info)
         return True
 
@@ -174,6 +177,7 @@ class HfBucketWorkspace(RemoteWorkspace):
         self, steps: Dict[str, StepInfo], run_data: Dict[str, str], name: Optional[str] = None
     ) -> Run:
         history: List[Dict[str, Any]] = []
+        kept: Dict[str, str] = {}
         if name is None:
             while True:
                 name = petname.generate() + str(random.randint(0, 100))
@@ -196,20 +200,29 @@ class HfBucketWorkspace(RemoteWorkspace):
                 # relaunch after a fix (`main`, `main2`, ...), with nothing gained: results are
                 # shared between runs by step identity anyway. Say what changed, since a
                 # changed identity is also how a finished step gets paid for twice.
+                #
+                # Steps the new graph does not mention stay in the run. `tango run -s <step>`
+                # registers only that step and its dependencies, and resuming part of a run
+                # must not make it forget the rest.
                 added = sorted(set(run_data) - set(previous_steps))
-                removed = sorted(set(previous_steps) - set(run_data))
                 changed = sorted(
                     step_name
                     for step_name in set(run_data) & set(previous_steps)
                     if run_data[step_name] != previous_steps[step_name]
                 )
+                if not added and not changed:
+                    return self._run_from_json(existing)
                 logger.warning(
-                    "Run '%s' exists with a different graph; updating it.%s%s%s",
+                    "Run '%s' exists with a different graph; updating it.%s%s",
                     name,
                     f"\n  added: {', '.join(added)}" if added else "",
-                    f"\n  removed: {', '.join(removed)}" if removed else "",
                     f"\n  changed identity: {', '.join(changed)}" if changed else "",
                 )
+                kept = {
+                    step_name: unique_id
+                    for step_name, unique_id in previous_steps.items()
+                    if step_name not in run_data
+                }
                 history = list(existing.get("history") or [])
                 history.append({"start_date": existing.get("start_date"), "steps": previous_steps})
 
@@ -220,11 +233,13 @@ class HfBucketWorkspace(RemoteWorkspace):
         record: Dict[str, Any] = {
             "name": name,
             "start_date": start_date.strftime(_DATE_FORMAT),
-            "steps": run_data,
+            "steps": {**kept, **run_data},
         }
         if history:
             record["history"] = history
         self._client.put_json(self.Constants.run_key(name), record)
+        if kept:
+            return self._run_from_json(record)
         return Run(name=name, steps=steps, start_date=start_date)
 
     def run_step_ids(self, name: str) -> Optional[Dict[str, str]]:

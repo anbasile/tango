@@ -85,4 +85,5 @@ class TestJobEntryPoint:
             raise ConnectionError("the Hub is down")
 
         monkeypatch.setattr(FakeHfApi, "batch_bucket_files", explode)
+        monkeypatch.setattr(job, "LOG_RETRY_BUDGET", 0.05)
         assert run("print('still fine')") == 0
