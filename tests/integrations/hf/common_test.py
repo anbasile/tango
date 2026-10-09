@@ -200,3 +200,37 @@ class TestHubCall:
         with pytest.raises(Exception, match="429"):
             hub_call(function, budget=0.05)
         assert 1 < len(calls) < 100
+
+    def test_a_lost_connection_is_not_retried_for_a_call_that_must_happen_once(self):
+        # A request whose answer is lost may have been carried out: a job submitted that way
+        # exists, and a second submission is paid for as well.
+        import httpx
+
+        from tango.integrations.hf.common import hub_call
+
+        function, calls = self._flaky([httpx.ReadTimeout("no answer")])
+        with pytest.raises(httpx.ReadTimeout):
+            hub_call(function, statuses=frozenset({429}), connection_errors=False)
+        assert len(calls) == 1
+
+    def test_a_budget_also_bounds_the_calls_made_inside(self):
+        # The bucket client retries by itself for ten minutes. A caller that allows a minute
+        # has to get a minute.
+        import time
+
+        from tango.integrations.hf.common import hub_call
+
+        def down():
+            raise ConnectionError("the Hub is down")
+
+        def client_method():
+            return hub_call(down, budget=30.0)
+
+        start = time.monotonic()
+        with pytest.raises(ConnectionError):
+            hub_call(client_method, budget=0.05)
+        assert time.monotonic() - start < 5.0
+
+        # And the limit does not outlive the call that set it.
+        function, calls = self._flaky([ConnectionError("reset")])
+        assert hub_call(function) == "ok"

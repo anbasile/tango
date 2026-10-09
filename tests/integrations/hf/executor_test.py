@@ -376,6 +376,25 @@ class TestJobOutcome:
         output = executor.execute_step_graph(StepGraph({"add": AddStep(a=1, b=2)}), run_name="r")
         assert set(output.failed) == {"add"}
 
+    def test_a_job_that_ignores_cancellation_keeps_its_lock(
+        self, monkeypatch, workspace, s3, jobs, tmp_path
+    ):
+        # Nothing says that job is over, so its lock is not taken from it and no second job
+        # is started next to it.
+        jobs.script = {"add": [["SCHEDULING"]]}
+        jobs.honour_cancel = False
+        step = AddStep(a=1, b=2)
+        lock = started_by_job(monkeypatch, workspace, step, "job-1")
+        executor = make_executor(workspace, tmp_path, attempts=2)
+        executor.scheduling_timeout_seconds = 0.05  # type: ignore[assignment]
+        executor.CANCEL_WAIT = 0.05
+        output = executor.execute_step_graph(StepGraph({"add": step}), run_name="r")
+
+        assert set(output.failed) == {"add"}
+        assert len(jobs.submitted) == 1
+        assert s3.objects, "the lock of a job that may be alive stays"
+        del lock
+
     def test_a_job_that_never_starts_is_cancelled_and_submitted_again(
         self, workspace, jobs, tmp_path
     ):
@@ -388,6 +407,80 @@ class TestJobOutcome:
         assert len(jobs.submitted) == 2
         assert set(output.successful) == {"add"}
         assert output.successful["add"].logs_location == "https://hf.co/jobs/job-2"
+
+
+class TestInterrupt:
+    def _interrupt_once_submitted(self, monkeypatch, jobs):
+        import concurrent.futures
+
+        real_wait = concurrent.futures.wait
+        interrupted = []
+
+        def wait(*args, **kwargs):
+            if jobs.submitted and not interrupted:
+                interrupted.append(True)
+                raise KeyboardInterrupt
+            return real_wait(*args, **kwargs)
+
+        monkeypatch.setattr(concurrent.futures, "wait", wait)
+
+    def test_an_interrupt_cancels_the_jobs_and_frees_their_steps(
+        self, monkeypatch, workspace, s3, jobs, tmp_path
+    ):
+        from tango.step_info import StepState
+
+        # A job that would run for ever: the run only ends if it is cancelled.
+        jobs.script = {"add": [["RUNNING"]]}
+        step = AddStep(a=1, b=2)
+        lock = started_by_job(monkeypatch, workspace, step, "job-1")
+        self._interrupt_once_submitted(monkeypatch, jobs)
+
+        executor = make_executor(workspace, tmp_path)
+        with pytest.raises(KeyboardInterrupt):
+            executor.execute_step_graph(StepGraph({"add": step}), run_name="r")
+
+        assert jobs.cancelled == ["job-1"]
+        info = workspace.step_info(step)
+        assert info.state == StepState.FAILED
+        assert "cancelled with the run" in info.error
+        assert s3.objects == {}, "the lock of the cancelled job should be gone"
+        del lock
+
+    def test_a_job_submitted_during_the_interrupt_is_cancelled_too(
+        self, monkeypatch, workspace, jobs, tmp_path
+    ):
+        # The submission is in flight when the interrupt comes, so nobody knows the job yet.
+        import threading
+
+        jobs.script = {"add": [["RUNNING"]]}
+        executor = make_executor(workspace, tmp_path)
+        submitting, release = threading.Event(), threading.Event()
+        real_run_job = jobs.run_job
+
+        def slow_run_job(**kwargs):
+            submitting.set()
+            release.wait(5.0)
+            return real_run_job(**kwargs)
+
+        monkeypatch.setattr("huggingface_hub.run_job", slow_run_job)
+
+        import concurrent.futures
+
+        real_wait = concurrent.futures.wait
+        interrupted = []
+
+        def wait(*args, **kwargs):
+            if not interrupted:
+                submitting.wait(5.0)
+                interrupted.append(True)
+                threading.Timer(0.2, release.set).start()
+                raise KeyboardInterrupt
+            return real_wait(*args, **kwargs)
+
+        monkeypatch.setattr(concurrent.futures, "wait", wait)
+        with pytest.raises(KeyboardInterrupt):
+            executor.execute_step_graph(StepGraph({"add": AddStep(a=1, b=2)}), run_name="r")
+        assert jobs.cancelled == ["job-1"]
 
 
 def FakeJobFor(job_id, stage):
@@ -522,6 +615,17 @@ class TestHubRequests:
         assert set(output.successful) == {"add"}
         assert jobs.count("inspect_job") >= 1
 
+    def test_a_submission_whose_answer_is_lost_is_not_repeated(self, workspace, jobs, tmp_path):
+        # The job may exist. Submitting again would pay for the step twice.
+        import httpx
+
+        jobs.failures["run_job"] = [httpx.ReadTimeout("no answer")]
+        output = make_executor(workspace, tmp_path).execute_step_graph(
+            StepGraph({"add": AddStep(a=1, b=2)}), run_name="r"
+        )
+        assert jobs.count("run_job") == 1
+        assert set(output.failed) == {"add"}
+
     def test_out_of_credit_stops_submitting(self, workspace, jobs, tmp_path):
         from .fake_hub import fake_http_error
 
@@ -569,7 +673,8 @@ class TestJobEnvironment:
         executor.execute_step_graph(StepGraph({"add": step}), run_name="r")
 
         script = jobs.commands[0]
-        assert "python -m tango.integrations.hf.job --bucket org/bucket" in script
+        # `exec`: the signal of a cancelled job has to reach the wrapper, not bash.
+        assert "exec python -m tango.integrations.hf.job --bucket org/bucket" in script
         assert f"--log-owner {step.unique_id}" in script
         assert f"--result-of {step.unique_id}" in script
         assert "-- tango --called-by-executor run" in script

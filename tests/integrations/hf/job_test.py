@@ -1,4 +1,7 @@
+import os
+import signal
 import sys
+import threading
 
 import pytest
 
@@ -87,3 +90,50 @@ class TestJobEntryPoint:
         monkeypatch.setattr(FakeHfApi, "batch_bucket_files", explode)
         monkeypatch.setattr(job, "LOG_RETRY_BUDGET", 0.05)
         assert run("print('still fine')") == 0
+
+    def test_a_cancelled_job_still_uploads_its_log(self, bucket):
+        # A cancelled job gets SIGTERM. The command is stopped and the log goes up.
+        timer = threading.Timer(1.0, os.kill, (os.getpid(), signal.SIGTERM))
+        timer.start()
+        try:
+            code = run("import time; print('before the signal', flush=True); time.sleep(60)")
+        finally:
+            timer.cancel()
+
+        assert code == 128 + signal.SIGTERM
+        log = bucket["logs/step-abc/job-42.log"].decode("utf-8")
+        assert "before the signal" in log
+        assert f"received signal {int(signal.SIGTERM)}" in log
+        assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL, "handlers are put back"
+
+    def test_a_log_copy_that_cannot_be_written_does_not_stop_the_command(
+        self, bucket, monkeypatch, capfd
+    ):
+        # A full disk is what the wrapper is there to report; it must not die of it.
+        real_open = open
+
+        class FullDisk:
+            def __init__(self, file):
+                self._file = file
+
+            def write(self, text):
+                raise OSError(28, "No space left on device")
+
+            def __getattr__(self, name):
+                return getattr(self._file, name)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self._file.close()
+
+        def fake_open(path, mode="r", *args, **kwargs):
+            file = real_open(path, mode, *args, **kwargs)
+            return FullDisk(file) if mode == "w" else file
+
+        monkeypatch.setattr(job, "open", fake_open, raising=False)
+        assert run("print('still printed')") == 0
+        out = capfd.readouterr().out
+        assert "still printed" in out
+        assert out.count("could not write to the log copy") == 1

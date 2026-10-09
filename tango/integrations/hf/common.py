@@ -544,10 +544,12 @@ def http_status(exc: BaseException) -> Optional[int]:
     return status if isinstance(status, int) else None
 
 
-def _is_transient(exc: BaseException, statuses: frozenset) -> bool:
+def _is_transient(exc: BaseException, statuses: frozenset, connection_errors: bool = True) -> bool:
     status = http_status(exc)
     if status is not None:
         return status in statuses
+    if not connection_errors:
+        return False
     if isinstance(exc, (ConnectionError, TimeoutError)):
         return True
     try:
@@ -566,10 +568,15 @@ def _retry_after(exc: BaseException) -> Optional[float]:
         return None
 
 
+#: The time by which the :func:`hub_call` in progress on this thread has to give up.
+_deadline = threading.local()
+
+
 def hub_call(
     function: Any,
     *args: Any,
     statuses: frozenset = TRANSIENT_STATUSES,
+    connection_errors: bool = True,
     budget: Optional[float] = None,
     stop: Optional[threading.Event] = None,
     **kwargs: Any,
@@ -580,33 +587,45 @@ def hub_call(
     The Hub allows 1,000 API requests per five minutes. Without this, one 429 while polling
     failed a whole run and left its jobs running with nobody watching them.
 
-    :param statuses: The HTTP statuses to retry. Connection errors are always retried.
-    :param budget: Seconds to keep trying. Defaults to :data:`RETRY_BUDGET_SECONDS`.
+    :param statuses: The HTTP statuses to retry.
+    :param connection_errors: Whether to retry when the connection fails or times out. Turn
+        it off for a call that must not be made twice: a request whose answer was lost may
+        have been carried out.
+    :param budget: Seconds to keep trying. Defaults to :data:`RETRY_BUDGET_SECONDS`. It also
+        bounds the calls ``function`` makes through :func:`hub_call` itself, which would
+        otherwise each keep trying for their own budget.
     :param stop: Set to give up early; the last error is raised.
     """
     budget = RETRY_BUDGET_SECONDS if budget is None else budget
-    start = time.monotonic()
+    outer: Optional[float] = getattr(_deadline, "value", None)
+    deadline = time.monotonic() + budget
+    if outer is not None:
+        deadline = min(deadline, outer)
     delay = RETRY_BASE_SECONDS
-    while True:
-        try:
-            return function(*args, **kwargs)
-        except Exception as exc:
-            if not _is_transient(exc, statuses):
-                raise
-            wait = max(delay, _retry_after(exc) or 0.0)
-            if time.monotonic() - start + wait > budget or (stop is not None and stop.is_set()):
-                raise
-            logger.warning(
-                "%s failed (%s); trying again in %.0f s.",
-                getattr(function, "__name__", "Hub call"),
-                http_status(exc) or type(exc).__name__,
-                wait,
-            )
-            if stop is not None:
-                stop.wait(wait)
-            else:
-                time.sleep(wait)
-            delay = min(delay * 2, RETRY_CAP_SECONDS)
+    _deadline.value = deadline
+    try:
+        while True:
+            try:
+                return function(*args, **kwargs)
+            except Exception as exc:
+                if not _is_transient(exc, statuses, connection_errors):
+                    raise
+                wait = max(delay, _retry_after(exc) or 0.0)
+                if time.monotonic() + wait > deadline or (stop is not None and stop.is_set()):
+                    raise
+                logger.warning(
+                    "%s failed (%s); trying again in %.0f s.",
+                    getattr(function, "__name__", "Hub call"),
+                    http_status(exc) or type(exc).__name__,
+                    wait,
+                )
+                if stop is not None:
+                    stop.wait(wait)
+                else:
+                    time.sleep(wait)
+                delay = min(delay * 2, RETRY_CAP_SECONDS)
+    finally:
+        _deadline.value = outer
 
 
 def get_s3_client(

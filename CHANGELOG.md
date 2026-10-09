@@ -25,6 +25,12 @@ below.
   evicted or killed never writes the end of its step. The executor now records the failure in
   the step's info and removes the dead job's lock (`HfBucketWorkspace.step_abandoned`,
   `HfStepLock.break_if_dead`).
+- **Interrupting a run stops its jobs.** Ctrl-C waited for the running jobs to finish before
+  cancelling anything, and a job being submitted at that moment was never cancelled. Each job
+  is now cancelled at once, and its step is left failed and unlocked like that of any other
+  dead job.
+- A job is submitted once. A submission whose connection is lost is not repeated, since the job
+  may exist.
 - **`timeout` is enforced.** The platform let a job with a four-hour timeout run for five and a
   half. The executor now cancels a job still running a minute past its timeout. `timeout` also
   accepts a plain number of seconds, which `tango.yml` used to reject.
@@ -96,7 +102,7 @@ below.
   with the steps added and the steps whose identity changed, where it used to fail with "Run
   name ... is already in use". Steps the new graph does not mention stay in the run, so
   `tango run -n <name> -s <step>` resumes part of a run without making it forget the rest. The
-  earlier step mapping is kept in the run's record. (`HfBucketWorkspace` only.)
+  identities that were replaced are kept in the run's record. (`HfBucketWorkspace` only.)
 - A step job's command is wrapped in `python -m tango.integrations.hf.job`, so the Tango
   installed in the job has to be this version or later.
 

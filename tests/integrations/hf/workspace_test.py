@@ -354,7 +354,14 @@ class TestRunNames:
         import json
 
         record = json.loads(FakeHfApi.STORE["org/bucket"]["runs/main.json"])
-        assert record["history"][0]["steps"]["changed"] == old_id
+        # Only what was replaced is kept, not the whole mapping once per relaunch.
+        assert record["history"] == [
+            {
+                "start_date": record["history"][0]["start_date"],
+                "added": ["new"],
+                "replaced": {"changed": old_id},
+            }
+        ]
         assert workspace.run_step_ids("main") == record["steps"]
         assert workspace.run_step_ids("no-such-run") is None
 

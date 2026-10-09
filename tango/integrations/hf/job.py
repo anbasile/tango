@@ -155,12 +155,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     uploader = _LogUploader(args.bucket, log_key, log_path, interval)
 
     with open(log_path, "w", encoding="utf-8", errors="replace") as log:
+        log_lost = False
 
         def emit(line: str) -> None:
+            nonlocal log_lost
             sys.stdout.write(line)
             sys.stdout.flush()
-            log.write(line)
-            log.flush()
+            if log_lost:
+                return
+            try:
+                log.write(line)
+                log.flush()
+            except OSError as exc:
+                # Most likely a full disk. The copy stops there; the command goes on.
+                log_lost = True
+                _say(f"could not write to the log copy, which ends here: {exc}")
 
         emit(f"{_PREFIX} job {job_id}, flavor {os.environ.get('TANGO_HF_FLAVOR', 'unknown')}\n")
         emit(f"{_PREFIX} log kept at hf://buckets/{args.bucket.strip('/')}/{log_key}\n")
@@ -180,9 +189,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             emit(f"{_PREFIX} received signal {signum}; stopping the command\n")
             process.terminate()
 
+        previous_handlers = {}
         if threading.current_thread() is threading.main_thread():
-            signal.signal(signal.SIGTERM, forward)
-            signal.signal(signal.SIGINT, forward)
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                previous_handlers[signum] = signal.signal(signum, forward)
 
         uploader.start()
         try:
@@ -191,6 +201,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 emit(line)
             code = process.wait()
         finally:
+            for signum, handler in previous_handlers.items():
+                signal.signal(signum, handler)
             emit(f"{_PREFIX} {_disk()}\n")
 
         if code < 0:

@@ -114,6 +114,9 @@ class _Outcome:
     #: Whether submitting the step again could end differently.
     retryable: bool = True
     running_seconds: float = 0.0
+    #: Whether the Hub has reported the job over. Not so for a job that was cancelled and
+    #: still showed as alive when the executor stopped waiting.
+    confirmed: bool = True
 
 
 class _JobPoller:
@@ -366,7 +369,6 @@ class HfJobsExecutor(Executor):
 
         self._is_cancelled = threading.Event()
         self._out_of_credit = threading.Event()
-        self._submitted_job_ids: Set[str] = set()
 
         # Looked up once. Left to the Hub, every `inspect_job` and `cancel_job` without a
         # namespace costs a `whoami` request of its own, and looks under the token's account
@@ -451,7 +453,11 @@ class HfJobsExecutor(Executor):
         ]
         if self.install_cmd:
             script.append(self.install_cmd)
-        script.append(" ".join(shlex.quote(part) for part in [*wrapper, "--", *tango_cmd]))
+        # `exec`, so that the signal of a cancelled job reaches the wrapper: bash does not pass
+        # signals on to a command it is waiting for.
+        script.append(
+            "exec " + " ".join(shlex.quote(part) for part in [*wrapper, "--", *tango_cmd])
+        )
         return "\n".join(script)
 
     def _build_command(
@@ -615,8 +621,8 @@ class HfJobsExecutor(Executor):
 
         flavor = self.flavor_for(step)
         try:
-            # Only the rate limit is retried here. After any other failure the job may exist,
-            # and submitting again would pay for it twice.
+            # Only the rate limit is retried here. After any other failure, a lost connection
+            # included, the job may exist, and submitting again would pay for it twice.
             return hub_call(
                 run_job,
                 image=self.image,
@@ -635,6 +641,7 @@ class HfJobsExecutor(Executor):
                 },
                 token=self.token,
                 statuses=frozenset({429}),
+                connection_errors=False,
                 stop=self._is_cancelled,
             )
         except Exception as exc:
@@ -691,7 +698,9 @@ class HfJobsExecutor(Executor):
 
         while True:
             self._check_if_cancelled()
-            time.sleep(self.poll_interval)
+            # Returns early when the run is cancelled, so the job is stopped without delay.
+            if self._is_cancelled.wait(self.poll_interval):
+                raise RunCancelled
             job = self._poller.get(job.id)
             stage = job_stage(job)
             now = time.monotonic()
@@ -708,8 +717,12 @@ class HfJobsExecutor(Executor):
 
             if reason is not None:
                 if now > cancel_deadline:
-                    # The cancellation did not show. Stop waiting; the step is failed either way.
-                    return _Outcome(job, "CANCELED", reason, retryable, running_seconds())
+                    # The cancellation did not show. Stop waiting; the step is failed either
+                    # way. The job may still be alive, so its lock stays unless the Hub says
+                    # otherwise, and the step is not submitted next to it.
+                    return _Outcome(
+                        job, "CANCELED", reason, False, running_seconds(), confirmed=False
+                    )
                 continue
 
             if (
@@ -782,6 +795,58 @@ class HfJobsExecutor(Executor):
         lines = [line for line in (step_info.error or "").strip().splitlines() if line.strip()]
         return lines[-1].strip() if lines else "the step raised"
 
+    def _abandon(self, step: Step, failure: str, job_id: Optional[str]) -> None:
+        """
+        Leave ``step`` failed and unlocked after its job ended without finishing it. With
+        ``job_id`` the lock of that job is removed without asking; without, only if the Hub
+        says its holder is over.
+        """
+        try:
+            hub_call(self.workspace.step_abandoned, step, failure, job_id)  # type: ignore[attr-defined]
+        except Exception:
+            logger.warning("Could not clear the state of '%s'.", step.name, exc_info=True)
+
+    def _cancel_with_run(
+        self, step: Step, job: Any, context: _RunContext, record: Dict[str, Any]
+    ) -> None:
+        """
+        The run was interrupted: cancel ``job``, wait for it to end and leave its step failed
+        and unlocked, as for a job that died by itself.
+        """
+        from huggingface_hub import inspect_job
+
+        failure = "cancelled with the run"
+        stage = ""
+        try:
+            self._cancel_job(job.id)
+            deadline = time.monotonic() + self.CANCEL_WAIT
+            while True:
+                stage = job_stage(
+                    hub_call(
+                        inspect_job,
+                        job_id=job.id,
+                        namespace=self.namespace,
+                        token=self.token,
+                        budget=30.0,
+                    )
+                )
+                if stage in TERMINAL_JOB_STAGES or time.monotonic() > deadline:
+                    break
+                time.sleep(min(self.poll_interval, 2.0))
+        except Exception:
+            logger.warning("Could not cancel job %s.", job.id, exc_info=True)
+
+        confirmed = stage in TERMINAL_JOB_STAGES
+        if not confirmed:
+            logger.warning("Job %s of step '%s' may still be running.", job.id, step.name)
+        record.update(
+            finished_at=utc_now_datetime().isoformat(),
+            stage=stage or record["stage"],
+            failure=failure,
+        )
+        self._write_job_record(context, record)
+        self._abandon(step, failure, job.id if confirmed else None)
+
     def _write_job_record(self, context: _RunContext, record: Dict[str, Any]) -> None:
         """
         Keep what is known about a job in the bucket. The Hub drops jobs from its list after a
@@ -838,8 +903,6 @@ class HfJobsExecutor(Executor):
                     step_name,
                     flavor,
                 )
-            self._submitted_job_ids.add(job.id)
-
             record: Dict[str, Any] = {
                 "job_id": job.id,
                 "url": job.url,
@@ -858,13 +921,16 @@ class HfJobsExecutor(Executor):
 
             try:
                 outcome = self._watch_job(step_name, job, record)
+            except RunCancelled:
+                # Done here and not by the thread that took the interrupt: this one knows of
+                # its job from the moment it exists, also when it was submitted meanwhile.
+                self._cancel_with_run(step, job, context, record)
+                raise
             except BaseException:
-                # Interrupted, or the Hub unreachable for longer than the retries cover. The
-                # job itself may well be alive; say which one, since nothing watches it now.
+                # The Hub unreachable for longer than the retries cover. The job itself may
+                # well be alive; say which one, since nothing watches it now.
                 logger.warning("No longer watching job %s of step '%s'.", job.id, step_name)
                 raise
-            finally:
-                self._submitted_job_ids.discard(job.id)
 
             failure = self._failure_of(step, outcome)
             record.update(
@@ -890,10 +956,7 @@ class HfJobsExecutor(Executor):
             else:
                 # The job is gone and wrote no end: do it here, or the step reads as running
                 # forever and its lock blocks whoever tries next.
-                try:
-                    hub_call(self.workspace.step_abandoned, step, failure, job.id)  # type: ignore[attr-defined]
-                except Exception:
-                    logger.warning("Could not clear the state of '%s'.", step_name, exc_info=True)
+                self._abandon(step, failure, job.id if outcome.confirmed else None)
 
             if own_failure is None and outcome.retryable and attempt < self.attempts:
                 cli_logger.warning(
@@ -912,13 +975,6 @@ class HfJobsExecutor(Executor):
             )
 
         raise AssertionError("unreachable")  # pragma: no cover
-
-    def _cancel_submitted_jobs(self) -> None:
-        for job_id in list(self._submitted_job_ids):
-            try:
-                self._cancel_job(job_id)
-            except Exception:  # pragma: no cover - best effort
-                logger.debug("Could not cancel job %s.", job_id, exc_info=True)
 
     def _execute_detached(self, step_graph: StepGraph, run_name: Optional[str]) -> ExecutorOutput:
         from huggingface_hub import run_job
@@ -961,6 +1017,7 @@ class HfJobsExecutor(Executor):
             labels={"tango-run": run_name or "", "name": f"tango-driver-{run_name or 'run'}"},
             token=self.token,
             statuses=frozenset({429}),
+            connection_errors=False,
         )
 
         cli_logger.info(
@@ -1065,30 +1122,36 @@ class HfJobsExecutor(Executor):
             with concurrent.futures.ThreadPoolExecutor(
                 max_workers=self.max_thread_workers, thread_name_prefix="HfJobsExecutor-"
             ) as pool:
-                while steps_left_to_run:
-                    for step_name in list(steps_to_run):
-                        future = pool.submit(self._execute_step_job, step_graph, step_name, context)
-                        future.add_done_callback(make_done_callback(step_name))
-                        step_futures.append(future)
-                        submitted_steps.add(step_name)
+                try:
+                    while steps_left_to_run:
+                        for step_name in list(steps_to_run):
+                            future = pool.submit(
+                                self._execute_step_job, step_graph, step_name, context
+                            )
+                            future.add_done_callback(make_done_callback(step_name))
+                            step_futures.append(future)
+                            submitted_steps.add(step_name)
 
-                    if step_futures:
-                        _, not_done = concurrent.futures.wait(
-                            step_futures,
-                            return_when=concurrent.futures.FIRST_COMPLETED,
-                            timeout=2.0,
-                        )
-                        step_futures = list(not_done)
-                    else:
-                        time.sleep(2.0)
+                        if step_futures:
+                            _, not_done = concurrent.futures.wait(
+                                step_futures,
+                                return_when=concurrent.futures.FIRST_COMPLETED,
+                                timeout=2.0,
+                            )
+                            step_futures = list(not_done)
+                        else:
+                            time.sleep(2.0)
 
-                    update_steps_to_run()
-        except (KeyboardInterrupt, CancellationError):
-            cli_logger.warning("Received interrupt, cancelling jobs...")
-            self._is_cancelled.set()
-            self._cancel_submitted_jobs()
-            concurrent.futures.wait(step_futures)
-            raise
+                        update_steps_to_run()
+                except (KeyboardInterrupt, CancellationError):
+                    # Inside the pool's block: leaving it waits for the workers, and they only
+                    # stop once they are told the run is cancelled. Each cancels its own job.
+                    cli_logger.warning(
+                        "Received interrupt, cancelling jobs and waiting for them to stop..."
+                    )
+                    self._is_cancelled.set()
+                    concurrent.futures.wait(step_futures)
+                    raise
         finally:
             self._is_cancelled.clear()
             for temp_dir in context.temp_dirs:

@@ -223,8 +223,16 @@ class HfBucketWorkspace(RemoteWorkspace):
                     for step_name, unique_id in previous_steps.items()
                     if step_name not in run_data
                 }
+                # Only what this registration replaces: the whole mapping once per relaunch
+                # would grow the record by the size of the graph every time.
                 history = list(existing.get("history") or [])
-                history.append({"start_date": existing.get("start_date"), "steps": previous_steps})
+                history.append(
+                    {
+                        "start_date": existing.get("start_date"),
+                        "added": added,
+                        "replaced": {step_name: previous_steps[step_name] for step_name in changed},
+                    }
+                )
 
         # Truncate to the second before returning, not just before writing: the serialised form
         # has no sub-second field, so keeping microseconds here would make the Run handed back
