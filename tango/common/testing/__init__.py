@@ -114,6 +114,7 @@ class TangoTestCase:
             name=name,
         )
 
+        assert run_name is not None  # only a dry run has no name to return
         return self.TEST_DIR / "workspace" / "runs" / run_name
 
 
