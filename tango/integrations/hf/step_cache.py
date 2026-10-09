@@ -52,7 +52,10 @@ class HfBucketStepCache(RemoteStepCache):
         reported as cached, or a concurrent reader would pick up a half-written result.
         """
         artifact_name = self.Constants.step_artifact_name(step)
-        entries = self._client.ls(artifact_name, recursive=True)
+        # Only what is inside the step's folder. A plain prefix listing also returns the lock
+        # `tango-step-<id>-lock`, so a step whose job died holding the lock looked cached: it
+        # was skipped, reported as succeeded, and the first step to need its result failed.
+        entries = self._client.ls_dir(artifact_name, recursive=True)
         if not entries:
             return None
         if any(

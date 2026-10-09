@@ -83,3 +83,120 @@ class TestConstants:
         assert Constants.run_log_key("brave-moth") == "runs/brave-moth.log"
         assert Constants.step_artifact_name("abc123") == "tango-step-abc123"
         assert Constants.step_lock_artifact_name("abc123") == "tango-step-abc123-lock"
+
+
+class TestParseTimeout:
+    @pytest.mark.parametrize(
+        "value, seconds",
+        [("4h", 14400), ("90s", 90), ("1.5m", 90), ("2d", 172800), ("30", 30), (45, 45), (2.9, 2)],
+    )
+    def test_units(self, value, seconds):
+        from tango.integrations.hf.common import parse_timeout
+
+        assert parse_timeout(value) == seconds
+
+    @pytest.mark.parametrize("value", ["soon", "4 hours", "", "-1h", 0, True])
+    def test_nonsense_is_refused(self, value):
+        from tango.common.exceptions import ConfigurationError
+        from tango.integrations.hf.common import parse_timeout
+
+        with pytest.raises(ConfigurationError):
+            parse_timeout(value)
+
+
+class TestJobStage:
+    def test_a_plain_string(self):
+        from tango.integrations.hf.common import job_stage
+
+        from .fake_hub import FakeJob
+
+        assert job_stage(FakeJob("j", "RUNNING")) == "RUNNING"
+
+    def test_an_enum(self):
+        # The Hub annotates the stage as an enum, whose str() is "JobStage.COMPLETED".
+        import enum
+
+        from tango.integrations.hf.common import TERMINAL_JOB_STAGES, job_stage
+
+        from .fake_hub import FakeJob
+
+        class JobStage(enum.Enum):
+            COMPLETED = "COMPLETED"
+
+        assert job_stage(FakeJob("j", JobStage.COMPLETED)) in TERMINAL_JOB_STAGES  # type: ignore[arg-type]
+
+    def test_no_status(self):
+        from tango.integrations.hf.common import job_stage
+
+        assert job_stage(object()) == ""
+
+
+class TestHubCall:
+    @pytest.fixture(autouse=True)
+    def fast(self, monkeypatch):
+        from tango.integrations.hf import common
+
+        monkeypatch.setattr(common, "RETRY_BASE_SECONDS", 0.01)
+
+    def _flaky(self, errors, result="ok"):
+        calls = []
+
+        def function(*args, **kwargs):
+            calls.append((args, kwargs))
+            if errors:
+                raise errors.pop(0)
+            return result
+
+        return function, calls
+
+    def test_a_rate_limit_is_waited_out(self):
+        from tango.integrations.hf.common import hub_call
+
+        from .fake_hub import fake_http_error
+
+        function, calls = self._flaky([fake_http_error(429), fake_http_error(503)])
+        assert hub_call(function, 1, key="value") == "ok"
+        assert calls == [((1,), {"key": "value"})] * 3
+
+    def test_a_dropped_connection_is_waited_out(self):
+        from tango.integrations.hf.common import hub_call
+
+        function, calls = self._flaky([ConnectionError("reset")])
+        assert hub_call(function) == "ok"
+        assert len(calls) == 2
+
+    def test_other_errors_are_raised_at_once(self):
+        from tango.integrations.hf.common import hub_call
+
+        from .fake_hub import fake_http_error
+
+        function, calls = self._flaky([fake_http_error(404)])
+        with pytest.raises(Exception, match="404"):
+            hub_call(function)
+        assert len(calls) == 1
+
+        function, calls = self._flaky([ValueError("a bug")])
+        with pytest.raises(ValueError):
+            hub_call(function)
+        assert len(calls) == 1
+
+    def test_only_the_named_statuses_are_retried(self):
+        # Submitting a job is retried on the rate limit only: after a 500 it may exist.
+        from tango.integrations.hf.common import hub_call
+
+        from .fake_hub import fake_http_error
+
+        function, calls = self._flaky([fake_http_error(500)])
+        with pytest.raises(Exception, match="500"):
+            hub_call(function, statuses=frozenset({429}))
+        assert len(calls) == 1
+
+    def test_it_gives_up_when_the_budget_is_spent(self):
+        from tango.integrations.hf.common import hub_call
+
+        from .fake_hub import fake_http_error
+
+        function, calls = self._flaky([fake_http_error(429) for _ in range(100)])
+        with pytest.raises(Exception, match="429"):
+            hub_call(function, budget=0.05)
+        assert 1 < len(calls) < 100

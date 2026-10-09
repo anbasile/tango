@@ -3,14 +3,14 @@ import logging
 import random
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import ParseResult
 
 import petname
 
 from tango.common.util import utc_now_datetime
 from tango.step import Step
-from tango.step_info import StepInfo
+from tango.step_info import StepInfo, StepState
 from tango.workspace import Run, Workspace
 from tango.workspaces.remote_workspace import RemoteWorkspace
 
@@ -134,11 +134,37 @@ class HfBucketWorkspace(RemoteWorkspace):
         )
 
     def _remove_step_info(self, step_info: StepInfo) -> None:
-        self._client.delete_prefix(self.Constants.step_artifact_name(step_info))
+        # The folder only: a prefix match would also delete the lock of a step that is running.
+        self._client.delete_dir(self.Constants.step_artifact_name(step_info))
         try:
             self._client.delete(self.Constants.step_info_key(step_info.unique_id))
         except Exception:
             logger.debug("No step info to remove for '%s'.", step_info.unique_id, exc_info=True)
+
+    def step_abandoned(self, step: Step, error: str, job_id: Optional[str] = None) -> bool:
+        """
+        Record that whatever was running ``step`` is gone without having finished it.
+
+        A step's state and lock are written by the process that runs it. When that process is
+        a Job that gets cancelled, evicted or killed at its timeout, nothing writes the end:
+        the step reads as running forever and its lock blocks the next attempt. The executor
+        calls this once it has seen the Job end.
+
+        :param error: What happened, stored as the step's error.
+        :param job_id: The Job that was running the step, whose lock can go without asking.
+        :returns: ``False`` when a holder that still looks alive has the lock, in which case
+            nothing is changed.
+        """
+        if not step.cache_results:
+            return True
+        if not self._remote_lock(step).break_if_dead(job_id):
+            return False
+        step_info = self.step_info(step)
+        if step_info.state == StepState.RUNNING:
+            step_info.end_time = utc_now_datetime()
+            step_info.error = error
+            self._update_step_info(step_info)
+        return True
 
     #
     # Runs.
@@ -147,6 +173,7 @@ class HfBucketWorkspace(RemoteWorkspace):
     def _save_run(
         self, steps: Dict[str, StepInfo], run_data: Dict[str, str], name: Optional[str] = None
     ) -> Run:
+        history: List[Dict[str, Any]] = []
         if name is None:
             while True:
                 name = petname.generate() + str(random.randint(0, 100))
@@ -158,28 +185,57 @@ class HfBucketWorkspace(RemoteWorkspace):
             except HfBucketNotFound:
                 pass
             else:
-                # Registering the very same graph under the same name again is a no-op, not a
-                # collision. A detached run relies on this: the client registers the run, then
-                # the driver job re-runs `tango run -n <name>` in its own container and would
-                # otherwise fail before starting. A name reused for a *different* graph is
-                # still an error.
-                if (existing.get("steps") or {}) != run_data:
-                    raise ValueError(f"Run name '{name}' is already in use")
-                return self._run_from_json(existing)
+                # Registering the very same graph under the same name again is a no-op. A
+                # detached run relies on this: the client registers the run, then the driver
+                # job re-runs `tango run -n <name>` in its own container.
+                previous_steps: Dict[str, str] = existing.get("steps") or {}
+                if previous_steps == run_data:
+                    return self._run_from_json(existing)
+
+                # A changed graph updates the run. Refusing it meant a new name for every
+                # relaunch after a fix (`main`, `main2`, ...), with nothing gained: results are
+                # shared between runs by step identity anyway. Say what changed, since a
+                # changed identity is also how a finished step gets paid for twice.
+                added = sorted(set(run_data) - set(previous_steps))
+                removed = sorted(set(previous_steps) - set(run_data))
+                changed = sorted(
+                    step_name
+                    for step_name in set(run_data) & set(previous_steps)
+                    if run_data[step_name] != previous_steps[step_name]
+                )
+                logger.warning(
+                    "Run '%s' exists with a different graph; updating it.%s%s%s",
+                    name,
+                    f"\n  added: {', '.join(added)}" if added else "",
+                    f"\n  removed: {', '.join(removed)}" if removed else "",
+                    f"\n  changed identity: {', '.join(changed)}" if changed else "",
+                )
+                history = list(existing.get("history") or [])
+                history.append({"start_date": existing.get("start_date"), "steps": previous_steps})
 
         # Truncate to the second before returning, not just before writing: the serialised form
         # has no sub-second field, so keeping microseconds here would make the Run handed back
         # differ from the one any later `registered_run()` reads.
         start_date = utc_now_datetime().replace(microsecond=0)
-        self._client.put_json(
-            self.Constants.run_key(name),
-            {
-                "name": name,
-                "start_date": start_date.strftime(_DATE_FORMAT),
-                "steps": run_data,
-            },
-        )
+        record: Dict[str, Any] = {
+            "name": name,
+            "start_date": start_date.strftime(_DATE_FORMAT),
+            "steps": run_data,
+        }
+        if history:
+            record["history"] = history
+        self._client.put_json(self.Constants.run_key(name), record)
         return Run(name=name, steps=steps, start_date=start_date)
+
+    def run_step_ids(self, name: str) -> Optional[Dict[str, str]]:
+        """
+        The ``{step name: unique id}`` mapping a run was last registered with, or ``None`` when
+        there is no run of that name. Unlike :meth:`registered_run` this reads one object.
+        """
+        try:
+            return self._client.get_json(self.Constants.run_key(name)).get("steps") or {}
+        except HfBucketNotFound:
+            return None
 
     def _run_from_json(self, run_json: Dict[str, Any]) -> Run:
         start_date = datetime.strptime(run_json["start_date"], _DATE_FORMAT).replace(
