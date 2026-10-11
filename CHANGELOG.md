@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v2.2.0](https://github.com/anbasile/tango/releases/tag/v2.2.0) - 2026-10-11
+
 Everything here comes from running about 25,000 training runs through the `hf` integration on
 Hugging Face Jobs. Roughly a fifth of what those runs cost was wasted by the problems fixed
 below.
